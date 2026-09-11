@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { db } from '../db/client.js'
 import { categorias, politicasSla } from '../db/schema.js'
-import { autenticar } from '../lib/auth.js'
+import { autenticar, somenteAdmin } from '../lib/auth.js'
 import { invalido, naoEncontrado, validar } from '../lib/http.js'
 import { LIMIAR_ESTOURO, LIMIAR_RISCO, SLA_PADRAO } from '../lib/sla.js'
 
@@ -28,7 +28,10 @@ const categoriaSchema = z.object({
 export async function rotasSla(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', autenticar)
 
-  /** Tudo que a tela de Gestao de Prazos precisa, em uma chamada. */
+  /**
+   * Leitura aberta a todo mundo do tenant: o colaborador precisa entender de
+   * onde vem o prazo do card dele. Escrita e so do admin (preHandler abaixo).
+   */
   app.get('/sla', async (req) => {
     const { tenantId } = req.user
     const [politicas, cats] = await Promise.all([
@@ -43,7 +46,7 @@ export async function rotasSla(app: FastifyInstance): Promise<void> {
     }
   })
 
-  app.post('/sla/politicas', async (req, reply) => {
+  app.post('/sla/politicas', { preHandler: somenteAdmin }, async (req, reply) => {
     const dados = validar(politicaSchema, req.body)
     const [criada] = await db
       .insert(politicasSla)
@@ -53,7 +56,7 @@ export async function rotasSla(app: FastifyInstance): Promise<void> {
     return reply.code(201).send({ politica: criada })
   })
 
-  app.patch('/sla/politicas/:id', async (req) => {
+  app.patch('/sla/politicas/:id', { preHandler: somenteAdmin }, async (req) => {
     const { id } = validar(z.object({ id: z.string().uuid() }), req.params)
     const dados = validar(politicaSchema.partial(), req.body)
     const [atualizada] = await db
@@ -65,7 +68,7 @@ export async function rotasSla(app: FastifyInstance): Promise<void> {
     return { politica: atualizada }
   })
 
-  app.delete('/sla/politicas/:id', async (req, reply) => {
+  app.delete('/sla/politicas/:id', { preHandler: somenteAdmin }, async (req, reply) => {
     const { id } = validar(z.object({ id: z.string().uuid() }), req.params)
     const [removida] = await db
       .delete(politicasSla)
@@ -75,7 +78,7 @@ export async function rotasSla(app: FastifyInstance): Promise<void> {
     return reply.code(204).send()
   })
 
-  app.post('/sla/categorias', async (req, reply) => {
+  app.post('/sla/categorias', { preHandler: somenteAdmin }, async (req, reply) => {
     const dados = validar(categoriaSchema, req.body)
     const [criada] = await db
       .insert(categorias)
@@ -85,7 +88,7 @@ export async function rotasSla(app: FastifyInstance): Promise<void> {
     return reply.code(201).send({ categoria: criada })
   })
 
-  app.patch('/sla/categorias/:id', async (req) => {
+  app.patch('/sla/categorias/:id', { preHandler: somenteAdmin }, async (req) => {
     const { id } = validar(z.object({ id: z.string().uuid() }), req.params)
     const dados = validar(categoriaSchema.partial(), req.body)
     const [atualizada] = await db
@@ -97,7 +100,7 @@ export async function rotasSla(app: FastifyInstance): Promise<void> {
     return { categoria: atualizada }
   })
 
-  app.delete('/sla/categorias/:id', async (req, reply) => {
+  app.delete('/sla/categorias/:id', { preHandler: somenteAdmin }, async (req, reply) => {
     const { id } = validar(z.object({ id: z.string().uuid() }), req.params)
     const [removida] = await db
       .delete(categorias)

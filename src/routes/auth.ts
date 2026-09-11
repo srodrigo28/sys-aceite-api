@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { db } from '../db/client.js'
 import { categorias, politicasSla, tenants, usuarios } from '../db/schema.js'
 import { autenticar } from '../lib/auth.js'
+import { usuarioPublico } from './equipe.js'
 import { conflito, invalido, naoEncontrado, validar } from '../lib/http.js'
 import { SLA_PADRAO } from '../lib/sla.js'
 
@@ -41,7 +42,7 @@ const loginSchema = z.object({
 
 export async function rotasAuth(app: FastifyInstance): Promise<void> {
   /** Cadastro: cria o tenant, o usuario admin e os dados base do workspace. */
-  app.post('/auth/registrar', async (req, reply) => {
+  app.post('/auth/registrar', { config: { rateLimit: { max: 10, timeWindow: '1 hour' } } }, async (req, reply) => {
     const dados = validar(registrarSchema, req.body)
     const email = dados.email.toLowerCase().trim()
 
@@ -102,15 +103,16 @@ export async function rotasAuth(app: FastifyInstance): Promise<void> {
     })
   })
 
-  app.post('/auth/login', async (req, reply) => {
+  app.post('/auth/login', { config: { rateLimit: { max: 20, timeWindow: '5 minutes' } } }, async (req, reply) => {
     const dados = validar(loginSchema, req.body)
     const email = dados.email.toLowerCase().trim()
 
     const usuario = await db.query.usuarios.findFirst({ where: eq(usuarios.email, email) })
     const confere = usuario ? await bcrypt.compare(dados.senha, usuario.senhaHash) : false
 
-    // mensagem unica para nao revelar se o e-mail existe
-    if (!usuario || !confere) {
+    // mensagem unica para nao revelar se o e-mail existe — nem que ele existe
+    // e foi desativado, que tambem e informacao sobre a conta
+    if (!usuario || !confere || !usuario.ativo) {
       return reply.code(401).send({ erro: 'credenciais', mensagem: 'E-mail ou senha incorretos.' })
     }
 
@@ -167,9 +169,37 @@ export async function rotasAuth(app: FastifyInstance): Promise<void> {
     if (!atualizado) throw naoEncontrado('Usuario')
     return { usuario: comoPublico(atualizado) }
   })
+
+  /** Troca a propria senha. Exige a atual — token roubado nao vira sequestro. */
+  app.patch('/auth/senha', { preHandler: autenticar }, async (req) => {
+    const { senhaAtual, novaSenha } = validar(
+      z.object({
+        senhaAtual: z.string().min(1, 'Informe a senha atual'),
+        novaSenha: z.string().min(8, 'A nova senha precisa ter ao menos 8 caracteres'),
+      }),
+      req.body,
+    )
+
+    const usuario = await db.query.usuarios.findFirst({ where: eq(usuarios.id, req.user.sub) })
+    if (!usuario) throw naoEncontrado('Usuario')
+
+    if (!(await bcrypt.compare(senhaAtual, usuario.senhaHash))) {
+      throw invalido('A senha atual esta incorreta.')
+    }
+    if (await bcrypt.compare(novaSenha, usuario.senhaHash)) {
+      throw invalido('A nova senha precisa ser diferente da atual.')
+    }
+
+    await db
+      .update(usuarios)
+      .set({ senhaHash: await bcrypt.hash(novaSenha, 10) })
+      .where(eq(usuarios.id, usuario.id))
+
+    return { ok: true }
+  })
 }
 
+/** Um serializador so para usuario, compartilhado com as rotas de equipe. */
 function comoPublico(u: typeof usuarios.$inferSelect) {
-  const { senhaHash: _senha, ...resto } = u
-  return resto
+  return usuarioPublico(u)
 }

@@ -1,1 +1,7 @@
 node_modules
+
+# segredos: NUNCA versionar (o .env ja vazou uma vez, em 08/09)
+.env
+.env.*
+!.env.example
+!.env.vps.example

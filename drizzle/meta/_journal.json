@@ -8,6 +8,48 @@
       "when": 1788909580232,
       "tag": "0000_motionless_ironclad",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788913931046,
+      "tag": "0001_anexos_bucket_colunas",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788913942610,
+      "tag": "0002_anexos_remove_dataurl",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788958140385,
+      "tag": "0003_equipe_convites",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788967471918,
+      "tag": "0004_anexos_miniatura",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788987874566,
+      "tag": "0005_usuarios_avatar",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789004551381,
+      "tag": "0006_grupos_notificacoes",
+      "breakpoints": true
     }
   ]
 }

@@ -22,6 +22,19 @@ export const estadoLinkEnum = pgEnum('estado_link', [
     'revogado',
 ]);
 export const decisaoEnum = pgEnum('decisao', ['aprovado', 'ajustes']);
+export const tipoNotificacaoEnum = pgEnum('tipo_notificacao', [
+    'os_atribuida',
+    'os_status',
+    'os_comentario',
+    'os_parecer',
+    'convite_aceito',
+]);
+export const estadoConviteEnum = pgEnum('estado_convite', [
+    'pendente',
+    'aceito',
+    'expirado',
+    'revogado',
+]);
 /* ------------------------------------------------------------------ *
  * Tenants  (multi-tenant: banco compartilhado, isolamento por tenant_id)
  * ------------------------------------------------------------------ */
@@ -43,8 +56,15 @@ export const usuarios = pgTable('usuarios', {
     email: text('email').notNull(),
     senhaHash: text('senha_hash').notNull(),
     cargo: text('cargo'),
+    // avatar_url ficou para tras: a foto agora mora no storage e e servida pelo
+    // proxy /usuarios/:id/avatar, igual aos anexos. O caminho nunca vai ao cliente.
     avatarUrl: text('avatar_url'),
+    avatarFileId: text('avatar_file_id'),
+    avatarCaminho: text('avatar_caminho'),
+    avatarAtualizadoEm: timestamp('avatar_atualizado_em', { withTimezone: true }),
     papel: papelEnum('papel').notNull().default('membro'),
+    // desativar em vez de apagar: responsavelId e historico apontam para o usuario
+    ativo: boolean('ativo').notNull().default(true),
     criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
     // e-mail unico globalmente: simplifica o login (nao precisa informar o tenant)
@@ -157,12 +177,27 @@ export const anexos = pgTable('anexos', {
     osId: uuid('os_id')
         .notNull()
         .references(() => ordensServico.id, { onDelete: 'cascade' }),
+    // redundante com a O.S., mas evita join em toda checagem de posse no download
+    tenantId: uuid('tenant_id')
+        .notNull()
+        .references(() => tenants.id, { onDelete: 'cascade' }),
     nome: text('nome').notNull(),
-    url: text('url').notNull(),
-    tipo: text('tipo'),
-    tamanho: integer('tamanho'),
+    fileId: text('file_id').notNull(),
+    storage: text('storage').$type().notNull(),
+    // URL publica do bucket ou caminho no disco. NUNCA serializar para o cliente.
+    caminho: text('caminho').notNull(),
+    mimeType: text('mime_type').notNull(),
+    tamanho: integer('tamanho').notNull(),
+    checksum: text('checksum'),
+    // miniatura: mesmo storage do original. Nulo em anexo antigo ou quando a
+    // geracao falha — nesses casos o proxy serve o arquivo original.
+    miniaturaFileId: text('miniatura_file_id'),
+    miniaturaCaminho: text('miniatura_caminho'),
+    miniaturaMime: text('miniatura_mime'),
+    miniaturaTamanho: integer('miniatura_tamanho'),
+    enviadoPorId: uuid('enviado_por_id').references(() => usuarios.id, { onDelete: 'set null' }),
     criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index('anexos_os_idx').on(t.osId)]);
+}, (t) => [index('anexos_os_idx').on(t.osId), index('anexos_tenant_idx').on(t.tenantId)]);
 export const comentarios = pgTable('comentarios', {
     id: uuid('id').primaryKey().defaultRandom(),
     osId: uuid('os_id')
@@ -222,6 +257,127 @@ export const linksAprovacao = pgTable('links_aprovacao', {
     index('links_tenant_idx').on(t.tenantId),
 ]);
 /* ------------------------------------------------------------------ *
+ * Equipe: quem participa de qual projeto, e os convites pendentes
+ *
+ * Admin enxerga todo projeto do tenant sem precisar de linha em
+ * projeto_membros. Colaborador so enxerga o que esta aqui.
+ * ------------------------------------------------------------------ */
+export const projetoMembros = pgTable('projeto_membros', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projetoId: uuid('projeto_id')
+        .notNull()
+        .references(() => projetos.id, { onDelete: 'cascade' }),
+    usuarioId: uuid('usuario_id')
+        .notNull()
+        .references(() => usuarios.id, { onDelete: 'cascade' }),
+    criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    uniqueIndex('projeto_membros_idx').on(t.projetoId, t.usuarioId),
+    index('projeto_membros_usuario_idx').on(t.usuarioId),
+]);
+/**
+ * Convite por e-mail. Nao cria usuario: a linha em `usuarios` so nasce no
+ * aceite, porque senhaHash e NOT NULL e conta sem senha vira zumbi no login.
+ */
+export const convites = pgTable('convites', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+        .notNull()
+        .references(() => tenants.id, { onDelete: 'cascade' }),
+    email: text('email').notNull(),
+    nome: text('nome').notNull(),
+    papel: papelEnum('papel').notNull().default('membro'),
+    cargo: text('cargo'),
+    mensagem: text('mensagem'),
+    token: text('token').notNull(),
+    estado: estadoConviteEnum('estado').notNull().default('pendente'),
+    expiraEm: timestamp('expira_em', { withTimezone: true }),
+    convidadoPorId: uuid('convidado_por_id').references(() => usuarios.id, {
+        onDelete: 'set null',
+    }),
+    /** preenchido no aceite */
+    usuarioId: uuid('usuario_id').references(() => usuarios.id, { onDelete: 'set null' }),
+    aceitoEm: timestamp('aceito_em', { withTimezone: true }),
+    emailEnviadoEm: timestamp('email_enviado_em', { withTimezone: true }),
+    criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    uniqueIndex('convites_token_idx').on(t.token),
+    index('convites_tenant_estado_idx').on(t.tenantId, t.estado),
+    index('convites_email_idx').on(t.email),
+]);
+/** Projetos prometidos no convite; viram projeto_membros no aceite. */
+export const conviteProjetos = pgTable('convite_projetos', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    conviteId: uuid('convite_id')
+        .notNull()
+        .references(() => convites.id, { onDelete: 'cascade' }),
+    projetoId: uuid('projeto_id')
+        .notNull()
+        .references(() => projetos.id, { onDelete: 'cascade' }),
+}, (t) => [uniqueIndex('convite_projetos_idx').on(t.conviteId, t.projetoId)]);
+/* ------------------------------------------------------------------ *
+ * Grupos de pessoas
+ *
+ * Grupo organiza o time (campo, escritorio, plantao) e NAO concede acesso:
+ * quem ve o que continua sendo `projeto_membros`. Sao duas perguntas
+ * diferentes; junta-las cria dois caminhos para a mesma resposta e eles
+ * divergem com o tempo.
+ * ------------------------------------------------------------------ */
+export const grupos = pgTable('grupos', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+        .notNull()
+        .references(() => tenants.id, { onDelete: 'cascade' }),
+    nome: text('nome').notNull(),
+    cor: text('cor').notNull().default('#6366f1'),
+    descricao: text('descricao'),
+    ordem: integer('ordem').notNull().default(0),
+    criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex('grupos_tenant_nome_idx').on(t.tenantId, t.nome)]);
+/** Uma pessoa pode estar em varios grupos. */
+export const grupoMembros = pgTable('grupo_membros', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    grupoId: uuid('grupo_id')
+        .notNull()
+        .references(() => grupos.id, { onDelete: 'cascade' }),
+    usuarioId: uuid('usuario_id')
+        .notNull()
+        .references(() => usuarios.id, { onDelete: 'cascade' }),
+    criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    uniqueIndex('grupo_membros_idx').on(t.grupoId, t.usuarioId),
+    index('grupo_membros_usuario_idx').on(t.usuarioId),
+]);
+/* ------------------------------------------------------------------ *
+ * Notificacoes
+ *
+ * `historico` responde "o que aconteceu nesta O.S."; esta tabela responde
+ * "o que e novo PARA MIM". Perguntas diferentes, leituras diferentes.
+ * ------------------------------------------------------------------ */
+export const notificacoes = pgTable('notificacoes', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+        .notNull()
+        .references(() => tenants.id, { onDelete: 'cascade' }),
+    usuarioId: uuid('usuario_id')
+        .notNull()
+        .references(() => usuarios.id, { onDelete: 'cascade' }),
+    tipo: tipoNotificacaoEnum('tipo').notNull(),
+    titulo: text('titulo').notNull(),
+    descricao: text('descricao'),
+    /** para onde a notificacao leva; nulo em evento sem O.S. */
+    osId: uuid('os_id').references(() => ordensServico.id, { onDelete: 'cascade' }),
+    projetoId: uuid('projeto_id').references(() => projetos.id, { onDelete: 'cascade' }),
+    /** quem causou — para nao notificar a si mesmo e para mostrar o avatar */
+    autorId: uuid('autor_id').references(() => usuarios.id, { onDelete: 'set null' }),
+    autorNome: text('autor_nome'),
+    lidaEm: timestamp('lida_em', { withTimezone: true }),
+    criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    // o sino pergunta "minhas nao lidas, mais recentes primeiro" o tempo todo
+    index('notificacoes_usuario_idx').on(t.usuarioId, t.lidaEm, t.criadoEm),
+]);
+/* ------------------------------------------------------------------ *
  * Relations (para a query API do Drizzle)
  * ------------------------------------------------------------------ */
 export const tenantsRelations = relations(tenants, ({ many }) => ({
@@ -230,13 +386,41 @@ export const tenantsRelations = relations(tenants, ({ many }) => ({
     categorias: many(categorias),
     politicasSla: many(politicasSla),
 }));
-export const usuariosRelations = relations(usuarios, ({ one }) => ({
+export const usuariosRelations = relations(usuarios, ({ one, many }) => ({
     tenant: one(tenants, { fields: [usuarios.tenantId], references: [tenants.id] }),
+    projetos: many(projetoMembros),
+}));
+export const gruposRelations = relations(grupos, ({ one, many }) => ({
+    tenant: one(tenants, { fields: [grupos.tenantId], references: [tenants.id] }),
+    membros: many(grupoMembros),
+}));
+export const grupoMembrosRelations = relations(grupoMembros, ({ one }) => ({
+    grupo: one(grupos, { fields: [grupoMembros.grupoId], references: [grupos.id] }),
+    usuario: one(usuarios, { fields: [grupoMembros.usuarioId], references: [usuarios.id] }),
+}));
+export const notificacoesRelations = relations(notificacoes, ({ one }) => ({
+    usuario: one(usuarios, { fields: [notificacoes.usuarioId], references: [usuarios.id] }),
+    autor: one(usuarios, { fields: [notificacoes.autorId], references: [usuarios.id] }),
+    os: one(ordensServico, { fields: [notificacoes.osId], references: [ordensServico.id] }),
+}));
+export const projetoMembrosRelations = relations(projetoMembros, ({ one }) => ({
+    projeto: one(projetos, { fields: [projetoMembros.projetoId], references: [projetos.id] }),
+    usuario: one(usuarios, { fields: [projetoMembros.usuarioId], references: [usuarios.id] }),
+}));
+export const convitesRelations = relations(convites, ({ one, many }) => ({
+    tenant: one(tenants, { fields: [convites.tenantId], references: [tenants.id] }),
+    convidadoPor: one(usuarios, { fields: [convites.convidadoPorId], references: [usuarios.id] }),
+    projetos: many(conviteProjetos),
+}));
+export const conviteProjetosRelations = relations(conviteProjetos, ({ one }) => ({
+    convite: one(convites, { fields: [conviteProjetos.conviteId], references: [convites.id] }),
+    projeto: one(projetos, { fields: [conviteProjetos.projetoId], references: [projetos.id] }),
 }));
 export const projetosRelations = relations(projetos, ({ one, many }) => ({
     tenant: one(tenants, { fields: [projetos.tenantId], references: [tenants.id] }),
     responsavel: one(usuarios, { fields: [projetos.responsavelId], references: [usuarios.id] }),
     ordens: many(ordensServico),
+    membros: many(projetoMembros),
 }));
 export const ordensServicoRelations = relations(ordensServico, ({ one, many }) => ({
     projeto: one(projetos, { fields: [ordensServico.projetoId], references: [projetos.id] }),

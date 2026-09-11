@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import { db, fecharConexao } from './client.js';
-import { categorias, comentarios, historico, ordensServico, politicasSla, projetos, tenants, usuarios, } from './schema.js';
+import { categorias, comentarios, historico, ordensServico, politicasSla, projetoMembros, projetos, tenants, usuarios, } from './schema.js';
 import { SLA_PADRAO } from '../lib/sla.js';
 const SLUG_DEMO = 'estudio-demo';
 const EMAIL_DEMO = 'demo@sysaceite.dev';
@@ -20,6 +20,12 @@ const EQUIPE = [
     { nome: 'Bruno Tavares', email: 'bruno@sysaceite.dev', cargo: 'Desenvolvedor' },
     { nome: 'Carla Menezes', email: 'carla@sysaceite.dev', cargo: 'Designer' },
     { nome: 'Diego Alves', email: 'diego@sysaceite.dev', cargo: 'Infraestrutura' },
+];
+/** indices de EQUIPE que participam de cada projeto, na ordem de PROJETOS */
+const MEMBROS_POR_PROJETO = [
+    [0, 1], // Site institucional: Ana e Bruno
+    [0, 1, 3], // App de pedidos: Ana, Bruno e Diego
+    [0, 2], // Campanha de setembro: Ana e Carla
 ];
 const PROJETOS = [
     { nome: 'Site institucional', cliente: 'Padaria do Ze', cor: '#6366f1' },
@@ -108,6 +114,16 @@ async function semear() {
     })))
         .returning();
     console.log(`  - ${projs.length} projetos`);
+    // o admin enxerga tudo sem linha aqui; estas sao as participacoes da equipe
+    const membros = await db
+        .insert(projetoMembros)
+        .values(projs.flatMap((projeto, i) => (MEMBROS_POR_PROJETO[i] ?? []).flatMap((indice) => {
+        // equipe[0] e o admin demo; a EQUIPE comeca no indice 1
+        const usuario = equipe[indice + 1];
+        return usuario ? [{ projetoId: projeto.id, usuarioId: usuario.id }] : [];
+    })))
+        .returning();
+    console.log(`  - ${membros.length} participacoes em projetos`);
     const agora = Date.now();
     const ano = new Date().getFullYear();
     const valores = MODELOS.map((modelo, i) => {

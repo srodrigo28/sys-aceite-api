@@ -3,7 +3,7 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { historico, linksAprovacao, ordensServico } from '../db/schema.js';
-import { autenticar, contexto } from '../lib/auth.js';
+import { autenticar, contexto, projetosVisiveis } from '../lib/auth.js';
 import { invalido, naoEncontrado, validar } from '../lib/http.js';
 import { env } from '../env.js';
 const VALIDADES = { '24h': 24, '7d': 24 * 7, '30d': 24 * 30, sem_expiracao: null };
@@ -21,6 +21,18 @@ const criarLinkSchema = z.object({
 export function montarUrlPublica(token) {
     return `${env.APP_PUBLIC_URL.replace(/\/$/, '')}/a/${token}`;
 }
+/** O.S. do tenant e, para colaborador, de projeto que ele participa. */
+async function osVisivel(id, req) {
+    const os = await db.query.ordensServico.findFirst({
+        where: and(eq(ordensServico.id, id), eq(ordensServico.tenantId, req.user.tenantId)),
+    });
+    if (!os)
+        throw naoEncontrado('O.S.');
+    const visiveis = await projetosVisiveis(req);
+    if (visiveis !== 'todos' && !visiveis.includes(os.projetoId))
+        throw naoEncontrado('O.S.');
+    return os;
+}
 export async function rotasAprovacao(app) {
     app.addHook('preHandler', autenticar);
     /** Gera um link secreto de aprovacao para a O.S. */
@@ -28,11 +40,7 @@ export async function rotasAprovacao(app) {
         const { id } = validar(z.object({ id: z.string().uuid() }), req.params);
         const dados = validar(criarLinkSchema, req.body);
         const { tenantId, usuarioId, nome } = contexto(req);
-        const os = await db.query.ordensServico.findFirst({
-            where: and(eq(ordensServico.id, id), eq(ordensServico.tenantId, tenantId)),
-        });
-        if (!os)
-            throw naoEncontrado('O.S.');
+        const os = await osVisivel(id, req);
         const horas = VALIDADES[dados.validade];
         const expiraEm = horas === null ? null : new Date(Date.now() + horas * 3_600_000);
         const [link] = await db
@@ -71,6 +79,7 @@ export async function rotasAprovacao(app) {
     });
     app.get('/os/:id/links', async (req) => {
         const { id } = validar(z.object({ id: z.string().uuid() }), req.params);
+        await osVisivel(id, req);
         const lista = await db.query.linksAprovacao.findMany({
             where: and(eq(linksAprovacao.osId, id), eq(linksAprovacao.tenantId, req.user.tenantId)),
             orderBy: desc(linksAprovacao.criadoEm),
@@ -85,6 +94,7 @@ export async function rotasAprovacao(app) {
         });
         if (!link)
             throw naoEncontrado('Link');
+        await osVisivel(link.osId, req);
         if (link.estado !== 'pendente') {
             throw invalido('Este link nao esta mais pendente e nao pode ser revogado.');
         }

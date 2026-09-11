@@ -1,8 +1,13 @@
+import bcrypt from 'bcryptjs';
 import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { anexos, categorias, comentarios, historico, linksAprovacao, ordensServico, politicasSla, projetos, tenants, } from '../db/schema.js';
-import { invalido, naoEncontrado, validar } from '../lib/http.js';
+import { anexos, categorias, comentarios, convites, conviteProjetos, historico, linksAprovacao, ordensServico, politicasSla, projetoMembros, projetos, tenants, usuarios, } from '../db/schema.js';
+import { ehImagem, responderArquivo, versaoParaServir } from '../lib/anexo.js';
+import { baixar } from '../lib/bucket.js';
+import { conflito, invalido, naoEncontrado, validar } from '../lib/http.js';
+import { interessadosNaOs, notificar } from '../lib/notificacao.js';
+import { estadoEfetivoConvite } from './equipe.js';
 import { calcularSla } from '../lib/sla.js';
 const tokenParam = z.object({ token: z.string().min(10).max(64) });
 const decidirSchema = z
@@ -16,6 +21,17 @@ const decidirSchema = z
     .refine((d) => d.decisao === 'aprovado' || d.observacao.trim().length >= 10, {
     path: ['observacao'],
     message: 'Descreva o ajuste necessario (minimo 10 caracteres)',
+});
+const aceitarConviteSchema = z
+    .object({
+    nome: z.string().min(2, 'Informe seu nome'),
+    senha: z.string().min(8, 'A senha precisa ter ao menos 8 caracteres'),
+    confirmacao: z.string().optional(),
+    ciente: z.literal(true, { message: 'Confirme que aceita o convite' }),
+})
+    .refine((d) => d.confirmacao === undefined || d.confirmacao === d.senha, {
+    path: ['confirmacao'],
+    message: 'As senhas nao conferem',
 });
 /** Expiracao e avaliada na leitura: link vencido vira 'expirado'. */
 function estadoEfetivo(link, agora = new Date()) {
@@ -93,14 +109,61 @@ export async function rotasPublicas(app) {
                     ? { abertaEm: os.abertaEm, inicioAtendimentoEm: os.inicioAtendimentoEm, concluidaEm: os.concluidaEm }
                     : null,
                 sla,
-                anexos: arquivos.map((a) => ({ id: a.id, nome: a.nome, url: a.url, tipo: a.tipo })),
+                // sem URL do bucket: o arquivo vem pela rota abaixo, escopada no token
+                anexos: arquivos.map((a) => ({
+                    id: a.id,
+                    nome: a.nome,
+                    mimeType: a.mimeType,
+                    tamanho: a.tamanho,
+                    ehImagem: ehImagem(a.mimeType),
+                    urlArquivo: `/publico/aprovacao/${token}/anexos/${a.id}`,
+                    // a grade usa esta; o original so quando a pessoa amplia
+                    urlMiniatura: a.miniaturaCaminho
+                        ? `/publico/aprovacao/${token}/anexos/${a.id}?miniatura=1`
+                        : null,
+                })),
             },
             projeto: projeto ? { nome: projeto.nome, cliente: projeto.cliente, cor: projeto.cor } : null,
             organizacao: tenant ? { nome: tenant.nome } : null,
         };
     });
+    /**
+     * Arquivo do anexo para quem abriu o link — sem login.
+     * Quatro checagens, e qualquer falha vira 404 (nunca confirmar que o id existe):
+     *   1. o link existe
+     *   2. o estado ainda serve conteudo (expirado e revogado NAO servem)
+     *   3. o link autoriza ver anexos
+     *   4. o anexo pertence a O.S. daquele link
+     */
+    app.get('/publico/aprovacao/:token/anexos/:anexoId', async (req, reply) => {
+        const { token, anexoId } = validar(z.object({ token: z.string().min(10).max(64), anexoId: z.string().uuid() }), req.params);
+        // e aqui que a miniatura mais importa: o cliente decide pelo celular
+        const { miniatura } = validar(z.object({ miniatura: z.string().optional() }), req.query);
+        const link = await db.query.linksAprovacao.findFirst({
+            where: eq(linksAprovacao.token, token),
+        });
+        if (!link)
+            throw naoEncontrado('Arquivo');
+        const estado = estadoEfetivo(link);
+        if (estado === 'expirado' || estado === 'revogado')
+            throw naoEncontrado('Arquivo');
+        if (!link.mostrarAnexos)
+            throw naoEncontrado('Arquivo');
+        const anexo = await db.query.anexos.findFirst({
+            where: and(eq(anexos.id, anexoId), eq(anexos.osId, link.osId)),
+        });
+        if (!anexo)
+            throw naoEncontrado('Arquivo');
+        const versao = versaoParaServir(anexo, miniatura === '1');
+        if (versao.checksum && req.headers['if-none-match'] === `"${versao.checksum}"`) {
+            return reply.code(304).send();
+        }
+        const conteudo = await baixar(versao);
+        // pagina publica: nada de cache compartilhado
+        return responderArquivo(reply, anexo, conteudo, { cache: 'private, no-store' });
+    });
     /** Registra o parecer. O card e marcado, mas NAO muda de coluna sozinho. */
-    app.post('/publico/aprovacao/:token', async (req, reply) => {
+    app.post('/publico/aprovacao/:token', { config: { rateLimit: { max: 20, timeWindow: '1 hour' } } }, async (req, reply) => {
         const { token } = validar(tokenParam, req.params);
         const dados = validar(decidirSchema, req.body);
         const link = await db.query.linksAprovacao.findFirst({
@@ -163,12 +226,159 @@ export async function rotasPublicas(app) {
             });
             return gravado;
         });
+        // quem aprova nao e usuario do sistema: autorId fica null e o nome vai
+        // como texto, para o sino mostrar quem decidiu
+        const osDoLink = await db.query.ordensServico.findFirst({
+            where: eq(ordensServico.id, link.osId),
+        });
+        if (osDoLink) {
+            await notificar({
+                tenantId: osDoLink.tenantId,
+                destinatarios: await interessadosNaOs(osDoLink.tenantId, osDoLink.responsavelId),
+                tipo: 'os_parecer',
+                titulo: aprovado
+                    ? `${osDoLink.codigo} aprovada pelo cliente`
+                    : `${osDoLink.codigo}: cliente pediu ajustes`,
+                descricao: observacao ? observacao.slice(0, 160) : osDoLink.titulo,
+                osId: osDoLink.id,
+                projetoId: osDoLink.projetoId,
+                autorId: null,
+                autorNome: dados.aprovadorNome.trim(),
+            });
+        }
         return reply.code(201).send({
             ok: true,
             estado: atualizado.estado,
             mensagem: aprovado
                 ? 'Aprovacao registrada. Obrigado!'
                 : 'Solicitacao de ajustes registrada. Obrigado!',
+        });
+    });
+    /* ------------------------------------------------------------------ *
+     * Convite de equipe — sem login, so o token secreto
+     * ------------------------------------------------------------------ */
+    /** O que a pessoa convidada ve antes de aceitar. Nada alem disto. */
+    app.get('/publico/convite/:token', { config: { rateLimit: { max: 60, timeWindow: '15 minutes' } } }, async (req) => {
+        const { token } = validar(tokenParam, req.params);
+        const convite = await db.query.convites.findFirst({ where: eq(convites.token, token) });
+        if (!convite)
+            throw naoEncontrado('Convite');
+        const estado = estadoEfetivoConvite(convite);
+        const organizacao = await db.query.tenants.findFirst({
+            where: eq(tenants.id, convite.tenantId),
+        });
+        const nomesProjetos = await db
+            .select({ nome: projetos.nome, cor: projetos.cor })
+            .from(conviteProjetos)
+            .innerJoin(projetos, eq(projetos.id, conviteProjetos.projetoId))
+            .where(eq(conviteProjetos.conviteId, convite.id));
+        let convidadoPor = null;
+        if (convite.convidadoPorId) {
+            const autor = await db.query.usuarios.findFirst({
+                where: eq(usuarios.id, convite.convidadoPorId),
+                columns: { nome: true },
+            });
+            convidadoPor = autor?.nome ?? null;
+        }
+        return {
+            estado,
+            convite: {
+                nome: convite.nome,
+                email: convite.email,
+                papel: convite.papel,
+                cargo: convite.cargo,
+                mensagem: convite.mensagem,
+                expiraEm: convite.expiraEm,
+                convidadoPor,
+            },
+            organizacao: organizacao ? { nome: organizacao.nome } : null,
+            projetos: nomesProjetos,
+        };
+    });
+    /** Aceite: cria a conta, entra nos projetos e devolve o JWT ja logado. */
+    app.post('/publico/convite/:token', { config: { rateLimit: { max: 15, timeWindow: '1 hour' } } }, async (req, reply) => {
+        const { token } = validar(tokenParam, req.params);
+        const dados = validar(aceitarConviteSchema, req.body);
+        const convite = await db.query.convites.findFirst({ where: eq(convites.token, token) });
+        if (!convite)
+            throw naoEncontrado('Convite');
+        const estado = estadoEfetivoConvite(convite);
+        if (estado !== 'pendente') {
+            throw invalido(estado === 'aceito'
+                ? 'Este convite ja foi aceito. Faca login com sua senha.'
+                : estado === 'expirado'
+                    ? 'Este convite expirou. Peca um novo ao administrador.'
+                    : 'Este convite foi revogado.');
+        }
+        const senhaHash = await bcrypt.hash(dados.senha, 10);
+        const criado = await db.transaction(async (tx) => {
+            // trava contra uso duplo: so segue se ainda estava pendente
+            const [travado] = await tx
+                .update(convites)
+                .set({ estado: 'aceito', aceitoEm: new Date() })
+                .where(and(eq(convites.id, convite.id), eq(convites.estado, 'pendente')))
+                .returning();
+            if (!travado)
+                throw conflito('Este convite ja foi usado.');
+            // o e-mail pode ter sido cadastrado entre o convite e o aceite
+            const ocupado = await tx.query.usuarios.findFirst({
+                where: eq(usuarios.email, convite.email),
+            });
+            if (ocupado)
+                throw conflito('Ja existe uma conta com este e-mail.');
+            const [usuario] = await tx
+                .insert(usuarios)
+                .values({
+                tenantId: convite.tenantId,
+                nome: dados.nome.trim(),
+                email: convite.email,
+                senhaHash,
+                cargo: convite.cargo,
+                papel: convite.papel,
+            })
+                .returning();
+            if (!usuario)
+                throw invalido('Nao foi possivel criar a conta.');
+            const vinculos = await tx
+                .select({ projetoId: conviteProjetos.projetoId })
+                .from(conviteProjetos)
+                .where(eq(conviteProjetos.conviteId, convite.id));
+            if (vinculos.length > 0) {
+                await tx
+                    .insert(projetoMembros)
+                    .values(vinculos.map((v) => ({ projetoId: v.projetoId, usuarioId: usuario.id })))
+                    .onConflictDoNothing();
+            }
+            await tx.update(convites).set({ usuarioId: usuario.id }).where(eq(convites.id, convite.id));
+            return usuario;
+        });
+        const organizacao = await db.query.tenants.findFirst({
+            where: eq(tenants.id, criado.tenantId),
+        });
+        // quem convidou fica sabendo que a pessoa entrou
+        await notificar({
+            tenantId: criado.tenantId,
+            destinatarios: [convite.convidadoPorId],
+            tipo: 'convite_aceito',
+            titulo: `${criado.nome} aceitou o convite`,
+            descricao: criado.email,
+            autorId: criado.id,
+            autorNome: criado.nome,
+        });
+        const jwt = app.jwt.sign({
+            sub: criado.id,
+            tenantId: criado.tenantId,
+            nome: criado.nome,
+            email: criado.email,
+            papel: criado.papel,
+        });
+        const { senhaHash: _senha, ...publico } = criado;
+        return reply.code(201).send({
+            token: jwt,
+            usuario: publico,
+            tenant: organizacao
+                ? { id: organizacao.id, nome: organizacao.nome, slug: organizacao.slug }
+                : null,
         });
     });
 }
