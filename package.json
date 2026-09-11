@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20 <21"
+  },
   "description": "API do SysAceite - controle de O.S. com SLA, Kanban e aprovacao por link",
   "scripts": {
     "dev": "tsx watch src/index.ts",
