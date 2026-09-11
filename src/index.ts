@@ -2,6 +2,8 @@ import cors from '@fastify/cors'
 import jwt from '@fastify/jwt'
 import multipart from '@fastify/multipart'
 import rateLimit from '@fastify/rate-limit'
+import swagger from '@fastify/swagger'
+import swaggerUi from '@fastify/swagger-ui'
 import Fastify from 'fastify'
 import { fecharConexao, verificarConexao } from './db/client.js'
 import { resumoEnv } from './carregar-env.js'
@@ -31,6 +33,49 @@ const app = Fastify({
         ? { target: 'pino-pretty', options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' } }
         : undefined,
   },
+})
+
+// Deve ser registrado antes de todas as rotas: o plugin descobre os schemas
+// durante o registro delas e monta o contrato OpenAPI dinamicamente.
+await app.register(swagger, {
+  openapi: {
+    openapi: '3.0.3',
+    info: {
+      title: 'SysAceite API',
+      description:
+        'API para controle de ordens de servico, SLA, Kanban e aprovacao por link.',
+      version: '0.1.0',
+    },
+    servers: [
+      { url: 'https://99dev.pro/sys-aceite-api', description: 'VPS de desenvolvimento' },
+      { url: 'http://localhost:3333', description: 'Desenvolvimento local' },
+    ],
+    tags: [
+      { name: 'Sistema', description: 'Disponibilidade e diagnostico da API' },
+      { name: 'Autenticacao', description: 'Cadastro, login e perfil' },
+      { name: 'Projetos', description: 'Projetos e painel' },
+      { name: 'Ordens de servico', description: 'O.S., comentarios, checklist e anexos' },
+      { name: 'SLA', description: 'Politicas e categorias de SLA' },
+      { name: 'Aprovacoes', description: 'Links de aprovacao' },
+      { name: 'Equipe', description: 'Usuarios e convites' },
+      { name: 'Grupos', description: 'Grupos de trabalho' },
+      { name: 'Notificacoes', description: 'Notificacoes do usuario' },
+      { name: 'Publico', description: 'Rotas sem JWT para aprovacao e convite' },
+    ],
+    components: {
+      securitySchemes: {
+        bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+      },
+    },
+  },
+})
+
+await app.register(swaggerUi, {
+  routePrefix: '/doc',
+  // O proxy publica a API sob este prefixo; sem ele os assets da UI buscariam
+  // /doc/* na raiz de 99dev.pro e responderiam 404.
+  indexPrefix: '/sys-aceite-api',
+  uiConfig: { docExpansion: 'list', deepLinking: true },
 })
 
 // anexos chegam por multipart; o limite real e o do @fastify/multipart abaixo
@@ -89,7 +134,39 @@ app.setErrorHandler(async (erro, _req, reply) => {
   await responderErro(erro, reply)
 })
 
-app.get('/health', async () => {
+app.get('/health', {
+  schema: {
+    tags: ['Sistema'],
+    summary: 'Verifica disponibilidade da API e dependencias',
+    response: {
+      200: {
+        type: 'object',
+        required: ['ok', 'servico', 'ambiente', 'banco', 'storage', 'limites', 'em'],
+        properties: {
+          ok: { type: 'boolean' },
+          servico: { type: 'string', example: 'sysaceite-api' },
+          ambiente: { type: 'string', example: 'development' },
+          banco: {
+            type: 'object',
+            required: ['conectado', 'latenciaMs'],
+            properties: {
+              conectado: { type: 'boolean' },
+              versao: { type: 'string' },
+              latenciaMs: { type: 'number' },
+            },
+          },
+          storage: { type: 'string' },
+          limites: {
+            type: 'object',
+            required: ['anexoBytes'],
+            properties: { anexoBytes: { type: 'integer' } },
+          },
+          em: { type: 'string', format: 'date-time' },
+        },
+      },
+    },
+  },
+}, async () => {
   const banco = await verificarConexao()
   return {
     ok: true,
