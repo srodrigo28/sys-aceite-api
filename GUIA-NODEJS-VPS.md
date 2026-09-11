@@ -11,6 +11,8 @@ npm --version
 docker --version
 ```
 
+Esta API usa Node.js 22 no container; o `package.json` aceita Node.js 22 a 24.
+
 O projeto deve ter `package.json`, `package-lock.json`, scripts `build` e `start`,
 `.env.example` sem valores reais e um `Dockerfile` na raiz.
 
@@ -33,6 +35,11 @@ cd /opt/apps/app/api
 ```
 
 ## Segredos fora do Git
+
+Este e o modelo recomendado para producao. No SysAceite, durante a fase atual de
+desenvolvimento, o `api/.env` e versionado e copiado pela imagem Docker; nesse caso use o
+procedimento de `DEPLOY.md`. Antes de abrir o repositorio ou promover para producao, migre de
+volta para este modelo externo.
 
 ```bash
 sudo mkdir -p /etc/minha-app
@@ -59,20 +66,16 @@ npm run build
 npm run env:check:dist
 ```
 
+Antes de colocar uma versão nova no ar, aplique as migrations do banco. Não as execute durante
+o `docker build`: nesse momento o banco pode não estar acessível e o build deve continuar
+reproduzível.
+
 ## Deploy com Docker
 
 ```bash
-docker build -t minha-app:latest .
-docker run --rm \
-  --env-file /etc/minha-app/app.env \
-  minha-app:latest npm run env:check:dist
-docker rm -f minha-app 2>/dev/null || true
-docker run -d \
-  --name minha-app \
-  --restart unless-stopped \
-  --env-file /etc/minha-app/app.env \
-  -p 3333:3333 \
-  minha-app:latest
+# Para o SysAceite, a partir da pasta api:
+chmod +x deploy-vps.sh
+ENV_FILE=/etc/minha-app/app.env ./deploy-vps.sh
 ```
 
 Verifique:
@@ -91,11 +94,7 @@ Troque `/health` pela rota de saúde do projeto.
 cd /opt/apps/app
 git pull --ff-only
 cd api
-docker build -t minha-app:latest .
-docker rm -f minha-app 2>/dev/null || true
-docker run -d --name minha-app --restart unless-stopped \
-  --env-file /etc/minha-app/app.env \
-  -p 3333:3333 minha-app:latest
+ENV_FILE=/etc/minha-app/app.env ./deploy-vps.sh
 ```
 
 ## Diagnóstico de crash-loop
@@ -105,7 +104,7 @@ docker ps -a
 docker logs --tail 200 minha-app
 docker inspect minha-app --format '{{.State.Status}} - {{.State.ExitCode}} - {{.State.Error}}'
 sudo test -r /etc/minha-app/app.env && echo 'arquivo encontrado'
-docker run --rm --env-file /etc/minha-app/app.env minha-app:latest npm run env:check:dist
+docker run --rm --env-file /etc/minha-app/app.env sysaceite-api:latest npm run env:check:dist
 ```
 
 Se aparecer `nenhum arquivo .env encontrado`, o arquivo não foi montado. Se aparecer
@@ -120,5 +119,7 @@ Se aparecer `nenhum arquivo .env encontrado`, o arquivo não foi montado. Se apa
 - [ ] `.env` e `.env.*` estão no `.gitignore`.
 - [ ] Segredos ficam fora do repositório, com permissão `600`.
 - [ ] O container usa `--restart unless-stopped`.
+- [ ] O deploy valida o ambiente e aplica migrations antes de trocar o container.
+- [ ] Existe `HEALTHCHECK` e `/health` responde depois do deploy.
 - [ ] O ambiente é validado antes de iniciar.
 - [ ] Logs nunca exibem senhas ou tokens.

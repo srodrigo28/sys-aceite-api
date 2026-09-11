@@ -1,7 +1,8 @@
 node_modules
 
-# segredos: NUNCA versionar (o .env ja vazou uma vez, em 08/09)
-.env
+# Ambiente de desenvolvimento: este projeto versiona APENAS o .env da raiz da
+# API para que o deploy de desenvolvimento receba a configuracao. Os demais
+# arquivos por ambiente continuam locais; nunca inclua chaves de producao aqui.
 .env.*
 !.env.example
 !.env.vps.example

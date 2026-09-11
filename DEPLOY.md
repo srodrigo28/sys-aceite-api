@@ -2,18 +2,19 @@
 
 A API é Node.js/Fastify e usa o `Dockerfile` deste diretório. Ela não precisa de `index.html`.
 
-## Segredos
+## Ambiente de desenvolvimento
 
-O `.env` nunca deve ser commitado. O `.dockerignore` também impede que ele entre na imagem.
-Na VPS, crie um arquivo externo, por exemplo `/etc/sysaceite/api.env`, com as variáveis do
-`.env.example` preenchidas. No mínimo, `DATABASE_URL` e `JWT_SECRET` são obrigatórias.
+Nesta fase, `api/.env` e incluído no repositório e na imagem Docker. Portanto, o deploy
+recebe `DATABASE_URL` e `JWT_SECRET` diretamente do arquivo. Para produção, volte ao modelo
+de arquivo externo com `--env-file` antes de abrir o repositório ou conceder acesso amplo.
 
 ```bash
-chmod 600 /etc/sysaceite/api.env
-docker build -t sysaceite-api .
-docker run -d --name sysaceite-api --restart unless-stopped \
-  --env-file /etc/sysaceite/api.env \
-  -p 3333:3333 sysaceite-api
+git add .env
+git commit -m "configura ambiente de desenvolvimento"
+git push
+docker build -t sysaceite-api:latest .
+docker rm -f sysaceite-api 2>/dev/null || true
+docker run -d --name sysaceite-api --restart unless-stopped -p 3333:3333 sysaceite-api:latest
 ```
 
 Também é possível definir `ENV_FILE=/caminho/seguro/api.env` ou injetar as variáveis diretamente
@@ -22,9 +23,9 @@ no ambiente do container. Não use `COPY .env` no Dockerfile.
 ## Verificação antes de iniciar
 
 ```bash
-docker run --rm --env-file /etc/sysaceite/api.env sysaceite-api npm run env:check:dist
+docker run --rm sysaceite-api:latest npm run env:check:dist
 ```
 
-Se o container entrar em `crash-loop` com `nenhum arquivo .env encontrado`, o arquivo não foi
-montado ou as variáveis não foram injetadas. O `.env` que existe no computador local não é
-enviado automaticamente pelo GitHub ou pelo deploy.
+Se aparecer `nenhum arquivo .env encontrado`, confira se o arquivo foi incluído no commit e se
+o build ocorreu depois dele. O script `deploy-vps.sh` continua disponível para o modelo externo
+de produção com `--env-file`.
