@@ -6,3 +6,5 @@ node_modules
 .env.*
 !.env.example
 !.env.vps.example
+# modelo do override de ambiente na VPS — so nomes de variavel e URL publica
+!.env.deploy.example

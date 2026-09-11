@@ -5,7 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import Fastify from 'fastify';
-import { fecharConexao, verificarConexao } from './db/client.js';
+import { fecharConexao, pingBanco } from './db/client.js';
 import { resumoEnv } from './carregar-env.js';
 import { anexoTamanhoMax, descricaoStorage, env, origensPermitidas, relatorioEnv, } from './env.js';
 import { ErroApp, responderErro } from './lib/http.js';
@@ -147,18 +147,50 @@ app.get('/health', {
         },
     },
 }, async () => {
-    const banco = await verificarConexao();
+    // pingBanco no lugar de verificarConexao: banco fora vira `conectado: false`,
+    // nao 500 nem requisicao pendurada. Quem consulta /health quer saber o estado,
+    // e um erro aqui e indistinguivel de API morta.
+    const banco = await pingBanco();
     return {
         ok: true,
         servico: 'sysaceite-api',
         ambiente: env.NODE_ENV,
-        banco: { conectado: banco.ok, versao: banco.versao, latenciaMs: banco.latenciaMs },
+        banco: {
+            conectado: banco.ok,
+            versao: banco.ok ? banco.versao : banco.erro,
+            latenciaMs: banco.latenciaMs,
+        },
         storage: descricaoStorage,
         // o front usa para validar antes de gastar a subida
         limites: { anexoBytes: anexoTamanhoMax },
         em: new Date().toISOString(),
     };
 });
+/**
+ * Liveness puro: responde sem tocar em banco, storage ou e-mail.
+ *
+ * E o caminho que a sonda do painel da VPS consulta. Com ela apontada para
+ * `/health`, uma indisponibilidade do Neon derruba o deploy inteiro — e um 404
+ * aceito como "saudavel" nao prova nada. Aqui 200 significa exatamente uma
+ * coisa: o processo esta escutando e roteando.
+ */
+app.get('/healthz', {
+    schema: {
+        tags: ['Sistema'],
+        summary: 'Liveness — responde sem consultar dependencias',
+        response: {
+            200: {
+                type: 'object',
+                required: ['ok', 'servico', 'em'],
+                properties: {
+                    ok: { type: 'boolean' },
+                    servico: { type: 'string', example: 'sysaceite-api' },
+                    em: { type: 'string', format: 'date-time' },
+                },
+            },
+        },
+    },
+}, async () => ({ ok: true, servico: 'sysaceite-api', em: new Date().toISOString() }));
 await app.register(rotasAuth);
 await app.register(rotasPublicas);
 await app.register(rotasProjetos);
@@ -176,19 +208,38 @@ for (const sinal of ['SIGINT', 'SIGTERM']) {
         process.exit(0);
     });
 }
+/**
+ * Ordem do boot: ESCUTAR PRIMEIRO, checar o banco depois.
+ *
+ * Antes o ping do Neon vinha antes do `listen`. Banco lento ou fora do ar
+ * prendia o processo antes de abrir a porta — e, se estourasse, o `exit(1)`
+ * punha o container em loop de reinicio. De fora isso e indistinguivel de "a
+ * API nao existe": o proxy aceita a conexao e nunca responde, nem 404. Estado
+ * medido na VPS em 11/09/2026.
+ *
+ * Banco fora e um problema do banco. A API precisa subir mesmo assim para
+ * poder dizer isso em `/health` — sem servidor escutando, nao ha como
+ * diagnosticar nada.
+ */
 try {
     app.log.info(`env: ${resumoEnv(relatorioEnv)}`);
-    const banco = await verificarConexao();
-    app.log.info(`banco conectado (${banco.versao}) em ${banco.latenciaMs}ms`);
     app.log.info(`storage de anexos: ${descricaoStorage}`);
     if (env.NODE_ENV === 'production') {
         app.log.info(`cors liberado para: ${origensPermitidas.join(', ')}`);
     }
     await app.listen({ port: env.PORT, host: env.HOST });
-    app.log.info(`API em http://localhost:${env.PORT}`);
+    app.log.info(`API escutando em ${env.HOST}:${env.PORT}`);
 }
 catch (erro) {
-    app.log.error(erro);
+    app.log.error(erro, 'falha ao abrir a porta');
     process.exit(1);
+}
+const banco = await pingBanco(15_000);
+if (banco.ok) {
+    app.log.info(`banco conectado (${banco.versao}) em ${banco.latenciaMs}ms`);
+}
+else {
+    // nao derruba o processo: /health passa a reportar `conectado: false`
+    app.log.error(`banco INDISPONIVEL apos ${banco.latenciaMs}ms: ${banco.erro}`);
 }
 //# sourceMappingURL=index.js.map

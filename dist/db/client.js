@@ -32,6 +32,38 @@ export async function verificarConexao() {
         latenciaMs: Date.now() - inicio,
     };
 }
+/**
+ * Ping que nunca estoura e nunca pendura.
+ *
+ * `/health` precisa responder mesmo com o banco fora — ela e a sonda que diz se
+ * a API esta viva. Sem o teto de tempo, uma conexao pendurada segura a resposta
+ * ate o timeout do proxy, e quem observa de fora conclui que a API inteira
+ * morreu quando so o banco esta lento.
+ */
+export async function pingBanco(tetoMs = 5_000) {
+    const inicio = Date.now();
+    let expirar;
+    try {
+        return await Promise.race([
+            verificarConexao(),
+            new Promise((_, rejeitar) => {
+                expirar = setTimeout(() => rejeitar(new Error(`banco nao respondeu em ${tetoMs}ms`)), tetoMs);
+                expirar.unref();
+            }),
+        ]);
+    }
+    catch (e) {
+        return {
+            ok: false,
+            erro: e instanceof Error ? e.message : 'falha ao consultar o banco',
+            latenciaMs: Date.now() - inicio,
+        };
+    }
+    finally {
+        if (expirar)
+            clearTimeout(expirar);
+    }
+}
 export async function fecharConexao() {
     await sql.end({ timeout: 5 });
 }
