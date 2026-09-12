@@ -2,7 +2,12 @@
  * Fluxo de equipe: convite por e-mail, aceite, papeis e acesso por projeto.
  * Cria o proprio tenant, entao nao encosta nos dados de demonstracao.
  */
-const API = 'http://localhost:3333'
+/**
+ * Base da API. `BASE_URL` aponta a suite para outro ambiente — a URL publica,
+ * por exemplo, onde o proxy entra no caminho e o comportamento pode diferir do
+ * que se ve em localhost.
+ */
+const API = (process.env.BASE_URL ?? 'http://localhost:3333').replace(/\/+$/, '')
 const sufixo = Date.now().toString(36)
 
 async function req(metodo, rota, corpo, token) {
