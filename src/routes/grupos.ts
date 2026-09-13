@@ -4,6 +4,8 @@ import { z } from 'zod'
 import { db } from '../db/client.js'
 import { grupoMembros, grupos, usuarios } from '../db/schema.js'
 import { autenticar, somenteAdmin } from '../lib/auth.js'
+import { doc } from '../lib/doc.js'
+import { grupoSchema } from '../lib/esquemas.js'
 import { conflito, invalido, naoEncontrado, validar } from '../lib/http.js'
 
 /**
@@ -40,11 +42,26 @@ const membrosSchema = z.object({
   usuarioIds: z.array(z.string().uuid()).max(200),
 })
 
+const grupoComMembrosSchema = grupoSchema.extend({
+  usuarioIds: z.array(z.string().uuid()),
+})
+
 export async function rotasGrupos(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', autenticar)
 
   /** Grupos do tenant com os integrantes de cada um. */
-  app.get('/grupos', async (req) => {
+  app.get('/grupos', {
+    schema: doc({
+      tag: 'Grupos',
+      resumo: 'Grupos do workspace com seus integrantes',
+      descricao:
+        'Grupo organiza o time — campo, escritorio, plantao — e **nao concede acesso nenhum**: ' +
+        'quem enxerga qual projeto continua sendo decidido pela participacao em projetos. ' +
+        'Sao duas perguntas diferentes, e junta-las criaria dois caminhos para a mesma resposta. ' +
+        'Leitura liberada a todo o tenant; escrita e so do admin.',
+      ok: { schema: z.object({ grupos: z.array(grupoComMembrosSchema) }) },
+    }),
+  }, async (req) => {
     const { tenantId } = req.user
 
     const lista = await db.query.grupos.findMany({
@@ -71,7 +88,17 @@ export async function rotasGrupos(app: FastifyInstance): Promise<void> {
     }
   })
 
-  app.post('/grupos', { preHandler: somenteAdmin }, async (req, reply) => {
+  app.post('/grupos', {
+    preHandler: somenteAdmin,
+    schema: doc({
+      tag: 'Grupos',
+      resumo: 'Cria um grupo (admin)',
+      descricao: 'O nome e unico dentro do workspace. Nasce vazio.',
+      body: criarSchema,
+      ok: { status: 201, schema: z.object({ grupo: grupoComMembrosSchema }) },
+      erros: [403, 409],
+    }),
+  }, async (req, reply) => {
     const dados = validar(criarSchema, req.body)
     const { tenantId } = req.user
 
@@ -94,7 +121,18 @@ export async function rotasGrupos(app: FastifyInstance): Promise<void> {
     return reply.code(201).send({ grupo: { ...criado, usuarioIds: [] } })
   })
 
-  app.patch('/grupos/:id', { preHandler: somenteAdmin }, async (req) => {
+  app.patch('/grupos/:id', {
+    preHandler: somenteAdmin,
+    schema: doc({
+      tag: 'Grupos',
+      resumo: 'Edita nome, cor, descricao ou posicao (admin)',
+      descricao: 'Os integrantes nao mudam por aqui: para isso existe `PUT /grupos/{id}/membros`.',
+      params: idParam,
+      body: atualizarSchema,
+      ok: { schema: z.object({ grupo: grupoSchema }) },
+      erros: [403, 409],
+    }),
+  }, async (req) => {
     const { id } = validar(idParam, req.params)
     const dados = validar(atualizarSchema, req.body)
     const { tenantId } = req.user
@@ -124,7 +162,19 @@ export async function rotasGrupos(app: FastifyInstance): Promise<void> {
   })
 
   /** Apaga o grupo. As pessoas continuam — o cascade so leva `grupo_membros`. */
-  app.delete('/grupos/:id', { preHandler: somenteAdmin }, async (req, reply) => {
+  app.delete('/grupos/:id', {
+    preHandler: somenteAdmin,
+    schema: doc({
+      tag: 'Grupos',
+      resumo: 'Apaga o grupo (admin)',
+      descricao:
+        'As pessoas continuam no workspace: o cascade leva apenas os vinculos. Como grupo nao da ' +
+        'acesso, ninguem perde nada ao ser apagado.',
+      params: idParam,
+      ok: { status: 204, schema: null, descricao: 'Grupo apagado. Sem corpo.' },
+      erros: [403],
+    }),
+  }, async (req, reply) => {
     const { id } = validar(idParam, req.params)
 
     const [removido] = await db
@@ -143,7 +193,26 @@ export async function rotasGrupos(app: FastifyInstance): Promise<void> {
    * sequencia, e "remover de A" e "adicionar em B" chegando fora de ordem
    * fariam a pessoa sumir dos dois grupos.
    */
-  app.put('/grupos/:id/membros', { preHandler: somenteAdmin }, async (req) => {
+  app.put('/grupos/:id/membros', {
+    preHandler: somenteAdmin,
+    schema: doc({
+      tag: 'Grupos',
+      resumo: 'Define a lista inteira de integrantes (admin)',
+      descricao:
+        'E PUT com o estado final, nao POST/DELETE por pessoa, e isso e deliberado: arrastar ' +
+        'alguem entre grupos dispara eventos em sequencia, e "remover de A" chegando depois de ' +
+        '"adicionar em B" faria a pessoa sumir dos dois. Mandar lista vazia esvazia o grupo. ' +
+        'Um id de outro workspace derruba a chamada inteira com 404.',
+      params: idParam,
+      body: membrosSchema,
+      ok: {
+        schema: z.object({
+          grupo: z.object({ id: z.string().uuid(), usuarioIds: z.array(z.string().uuid()) }),
+        }),
+      },
+      erros: [403],
+    }),
+  }, async (req) => {
     const { id } = validar(idParam, req.params)
     const { usuarioIds } = validar(membrosSchema, req.body)
     const { tenantId } = req.user

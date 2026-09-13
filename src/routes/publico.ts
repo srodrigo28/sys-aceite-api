@@ -21,6 +21,8 @@ import {
 } from '../db/schema.js'
 import { ehImagem, responderArquivo, versaoParaServir } from '../lib/anexo.js'
 import { baixar } from '../lib/bucket.js'
+import { doc } from '../lib/doc.js'
+import { sessaoSchema, slaSchema } from '../lib/esquemas.js'
 import { conflito, invalido, naoEncontrado, validar } from '../lib/http.js'
 import { interessadosNaOs, notificar } from '../lib/notificacao.js'
 import { estadoEfetivoConvite } from './equipe.js'
@@ -53,6 +55,88 @@ const aceitarConviteSchema = z
     message: 'As senhas nao conferem',
   })
 
+const anexoParam = z.object({ token: z.string().min(10).max(64), anexoId: z.string().uuid() })
+const miniaturaQuery = z.object({
+  miniatura: z.string().optional().describe('1 serve a miniatura webp, que e o que a grade usa'),
+})
+
+/**
+ * O que o aprovador ve. Cada bloco opcional obedece a uma chave do link:
+ * `mostrarDatas`, `mostrarSla` e `mostrarAnexos`. Desligado vira `null` ou
+ * lista vazia — nao vem escondido no corpo esperando o front nao mostrar.
+ */
+const paginaAprovacaoSchema = z.object({
+  estado: z.enum(['pendente', 'aprovado', 'ajustes', 'expirado', 'revogado']),
+  link: z.object({
+    mensagem: z.string().nullable(),
+    expiraEm: z.string().nullable(),
+    mostrarAnexos: z.boolean(),
+    mostrarDatas: z.boolean(),
+    mostrarSla: z.boolean(),
+    aprovadorNomeSugerido: z.string().nullable(),
+    aprovadorEmailSugerido: z.string().nullable(),
+  }),
+  parecer: z
+    .object({
+      decisao: z.enum(['aprovado', 'ajustes']),
+      observacao: z.string().nullable(),
+      aprovadorNome: z.string().nullable(),
+      decididoEm: z.string(),
+    })
+    .nullable()
+    .describe('Preenchido depois que alguem decidiu; e o que a tela de somente-leitura mostra'),
+  os: z.object({
+    codigo: z.string(),
+    titulo: z.string(),
+    descricao: z.string().nullable(),
+    prioridade: z.enum(['critica', 'alta', 'media', 'baixa']),
+    tipo: z.enum(['evento', 'tarefa']),
+    categoria: z.object({ nome: z.string(), cor: z.string() }).nullable(),
+    datas: z
+      .object({
+        abertaEm: z.string(),
+        inicioAtendimentoEm: z.string().nullable(),
+        concluidaEm: z.string().nullable(),
+      })
+      .nullable(),
+    sla: slaSchema.nullable(),
+    anexos: z.array(
+      z.object({
+        id: z.string().uuid(),
+        nome: z.string(),
+        mimeType: z.string(),
+        tamanho: z.number().int(),
+        ehImagem: z.boolean(),
+        urlArquivo: z.string().describe('Caminho escopado neste token, nao a URL do bucket'),
+        urlMiniatura: z.string().nullable(),
+      }),
+    ),
+  }),
+  projeto: z.object({ nome: z.string(), cliente: z.string(), cor: z.string() }).nullable(),
+  organizacao: z.object({ nome: z.string() }).nullable(),
+})
+
+const pareceRegistradoSchema = z.object({
+  ok: z.boolean(),
+  estado: z.enum(['aprovado', 'ajustes']),
+  mensagem: z.string().describe('Texto pronto para a tela de confirmacao'),
+})
+
+const paginaConviteSchema = z.object({
+  estado: z.enum(['pendente', 'aceito', 'expirado', 'revogado']),
+  convite: z.object({
+    nome: z.string(),
+    email: z.string().email(),
+    papel: z.enum(['admin', 'membro']),
+    cargo: z.string().nullable(),
+    mensagem: z.string().nullable(),
+    expiraEm: z.string().nullable(),
+    convidadoPor: z.string().nullable(),
+  }),
+  organizacao: z.object({ nome: z.string() }).nullable(),
+  projetos: z.array(z.object({ nome: z.string(), cor: z.string() })),
+})
+
 /** Expiracao e avaliada na leitura: link vencido vira 'expirado'. */
 function estadoEfetivo(link: LinkAprovacao, agora = new Date()) {
   if (link.estado === 'pendente' && link.expiraEm && link.expiraEm <= agora) return 'expirado'
@@ -70,7 +154,21 @@ export async function rotasPublicas(app: FastifyInstance): Promise<void> {
    * Pagina de aprovacao. Sem login: o segredo e o proprio token.
    * Devolve apenas o que o link autoriza — comentario interno nunca sai daqui.
    */
-  app.get('/publico/aprovacao/:token', async (req) => {
+  app.get('/publico/aprovacao/:token', {
+    schema: doc({
+      tag: 'Publico',
+      resumo: 'Abre a pagina de aprovacao — sem login e sem conta',
+      descricao:
+        'O token da URL **e** a credencial: nao ha cabecalho de autorizacao aqui. Devolve so o ' +
+        'que o link autorizou, e a filtragem acontece no servidor: bloco desligado volta `null` ' +
+        'ou vazio, nunca escondido no corpo. **Comentario interno jamais sai por aqui.** ' +
+        'Link vencido nao precisa de rotina para virar `expirado`: o estado e calculado na ' +
+        'leitura. Token invalido responde 404, igual a token inexistente.',
+      publico: true,
+      params: tokenParam,
+      ok: { schema: paginaAprovacaoSchema },
+    }),
+  }, async (req) => {
     const { token } = validar(tokenParam, req.params)
 
     const link = await db.query.linksAprovacao.findFirst({
@@ -162,13 +260,28 @@ export async function rotasPublicas(app: FastifyInstance): Promise<void> {
    *   3. o link autoriza ver anexos
    *   4. o anexo pertence a O.S. daquele link
    */
-  app.get('/publico/aprovacao/:token/anexos/:anexoId', async (req, reply) => {
+  app.get('/publico/aprovacao/:token/anexos/:anexoId', {
+    schema: doc({
+      tag: 'Publico',
+      resumo: 'Baixa um anexo pelo link de aprovacao — sem login',
+      descricao:
+        'Quatro checagens, e qualquer falha vira **404**, nunca 403: o link existe; o estado ' +
+        'ainda serve conteudo (expirado e revogado nao servem); o link tem `mostrarAnexos`; e o ' +
+        'anexo pertence aquela O.S. Um 403 ja confirmaria que o arquivo existe. ' +
+        'A miniatura importa mais aqui do que em qualquer outro lugar: o cliente decide pelo ' +
+        'celular, muitas vezes no 4G.',
+      publico: true,
+      params: anexoParam,
+      query: miniaturaQuery,
+      binario: { descricao: 'O arquivo, com o content-type real' },
+    }),
+  }, async (req, reply) => {
     const { token, anexoId } = validar(
-      z.object({ token: z.string().min(10).max(64), anexoId: z.string().uuid() }),
+      anexoParam,
       req.params,
     )
     // e aqui que a miniatura mais importa: o cliente decide pelo celular
-    const { miniatura } = validar(z.object({ miniatura: z.string().optional() }), req.query)
+    const { miniatura } = validar(miniaturaQuery, req.query)
 
     const link = await db.query.linksAprovacao.findFirst({
       where: eq(linksAprovacao.token, token),
@@ -196,7 +309,26 @@ export async function rotasPublicas(app: FastifyInstance): Promise<void> {
   })
 
   /** Registra o parecer. O card e marcado, mas NAO muda de coluna sozinho. */
-  app.post('/publico/aprovacao/:token', { config: { rateLimit: { max: 20, timeWindow: '1 hour' } } }, async (req, reply) => {
+  app.post('/publico/aprovacao/:token', {
+    config: { rateLimit: { max: 20, timeWindow: '1 hour' } },
+    schema: doc({
+      tag: 'Publico',
+      resumo: 'Registra o parecer do aprovador — sem login',
+      descricao:
+        'Em `ajustes` a observacao e obrigatoria e precisa de ao menos 10 caracteres: "nao gostei" ' +
+        'nao e um pedido de ajuste acionavel. `ciente` tem de vir `true` — e a confirmacao de ' +
+        'leitura que fica registrada. A gravacao usa trava otimista no estado `pendente`, entao ' +
+        'dois cliques simultaneos nao geram dois pareceres; o segundo recebe 400. ' +
+        '**O card nao muda de coluna:** o parecer marca a O.S., vira comentario publico e entra ' +
+        'no historico, mas o Kanban continua sendo movido a mao. ' +
+        'Depois disso o link fica somente leitura. Limite de 20 por hora por IP.',
+      publico: true,
+      params: tokenParam,
+      body: decidirSchema,
+      ok: { status: 201, schema: pareceRegistradoSchema, descricao: 'Parecer registrado' },
+      erros: [429],
+    }),
+  }, async (req, reply) => {
     const { token } = validar(tokenParam, req.params)
     const dados = validar(decidirSchema, req.body)
 
@@ -299,7 +431,20 @@ export async function rotasPublicas(app: FastifyInstance): Promise<void> {
    * ------------------------------------------------------------------ */
 
   /** O que a pessoa convidada ve antes de aceitar. Nada alem disto. */
-  app.get('/publico/convite/:token', { config: { rateLimit: { max: 60, timeWindow: '15 minutes' } } }, async (req) => {
+  app.get('/publico/convite/:token', {
+    config: { rateLimit: { max: 60, timeWindow: '15 minutes' } },
+    schema: doc({
+      tag: 'Publico',
+      resumo: 'O que a pessoa convidada ve antes de aceitar',
+      descricao:
+        'Organizacao, quem convidou, papel oferecido e os projetos prometidos. Nada alem disso: ' +
+        'quem ainda nao aceitou nao e do time.',
+      publico: true,
+      params: tokenParam,
+      ok: { schema: paginaConviteSchema },
+      erros: [429],
+    }),
+  }, async (req) => {
     const { token } = validar(tokenParam, req.params)
 
     const convite = await db.query.convites.findFirst({ where: eq(convites.token, token) })
@@ -342,7 +487,23 @@ export async function rotasPublicas(app: FastifyInstance): Promise<void> {
   })
 
   /** Aceite: cria a conta, entra nos projetos e devolve o JWT ja logado. */
-  app.post('/publico/convite/:token', { config: { rateLimit: { max: 15, timeWindow: '1 hour' } } }, async (req, reply) => {
+  app.post('/publico/convite/:token', {
+    config: { rateLimit: { max: 15, timeWindow: '1 hour' } },
+    schema: doc({
+      tag: 'Publico',
+      resumo: 'Aceita o convite, cria a conta e ja devolve a sessao',
+      descricao:
+        'A linha em `usuarios` so nasce aqui — o convite nao cria usuario antes, porque conta sem ' +
+        'senha vira zumbi no login. No aceite a pessoa entra nos projetos prometidos e quem ' +
+        'convidou recebe notificacao. Convite ja aceito, expirado ou revogado da 400 com a ' +
+        'mensagem certa para a tela. Limite de 15 por hora por IP.',
+      publico: true,
+      params: tokenParam,
+      body: aceitarConviteSchema,
+      ok: { status: 201, schema: sessaoSchema, descricao: 'Conta criada e sessao aberta' },
+      erros: [409, 429],
+    }),
+  }, async (req, reply) => {
     const { token } = validar(tokenParam, req.params)
     const dados = validar(aceitarConviteSchema, req.body)
 

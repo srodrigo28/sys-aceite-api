@@ -266,6 +266,72 @@ const atividade = await req(
 )
 conferir(atividade.status === 201, `admin cria atividade atribuida (${atividade.status})`)
 
+/* --- checklist: ordem completa, atomica e isolada --------------------- */
+
+const itensChecklist = []
+for (const [ordem, texto] of ['Primeiro', 'Segundo', 'Terceiro'].entries()) {
+  const criadoItem = await req(
+    'POST',
+    `/os/${atividade.corpo.os.id}/checklist`,
+    { texto, ordem },
+    tokenAdmin,
+  )
+  itensChecklist.push(criadoItem.corpo.item)
+}
+conferir(itensChecklist.every((item) => item?.id), 'cria os tres itens do checklist para ordenar')
+
+const ordemFinal = [...itensChecklist].reverse().map((item) => item.id)
+const reordenou = await req(
+  'PUT',
+  `/os/${atividade.corpo.os.id}/checklist/ordem`,
+  { itemIds: ordemFinal },
+  tokenAdmin,
+)
+conferir(
+  reordenou.status === 200 && reordenou.corpo.itens?.map((item) => item.id).join(',') === ordemFinal.join(','),
+  `reordena a lista inteira (${reordenou.status})`,
+)
+
+const persistida = await req('GET', `/os/${atividade.corpo.os.id}`, undefined, tokenAdmin)
+conferir(
+  persistida.corpo.checklist?.map((item) => item.id).join(',') === ordemFinal.join(','),
+  'a ordem persiste ao recarregar o detalhe',
+)
+
+const incompleta = await req(
+  'PUT',
+  `/os/${atividade.corpo.os.id}/checklist/ordem`,
+  { itemIds: ordemFinal.slice(1) },
+  tokenAdmin,
+)
+conferir(incompleta.status === 400, `lista incompleta e recusada (${incompleta.status})`)
+conferir(
+  (await req('GET', `/os/${atividade.corpo.os.id}`, undefined, tokenAdmin)).corpo.checklist?.map((item) => item.id).join(',') === ordemFinal.join(','),
+  'recusa nao altera a ordem existente',
+)
+
+const ordemAlternativa = [ordemFinal[1], ordemFinal[2], ordemFinal[0]]
+const concorrentes = await Promise.all([
+  req('PUT', `/os/${atividade.corpo.os.id}/checklist/ordem`, { itemIds: ordemFinal }, tokenAdmin),
+  req('PUT', `/os/${atividade.corpo.os.id}/checklist/ordem`, { itemIds: ordemAlternativa }, tokenAdmin),
+])
+const depoisDaConcorrencia = (await req('GET', `/os/${atividade.corpo.os.id}`, undefined, tokenAdmin)).corpo.checklist
+  ?.map((item) => item.id)
+  .join(',')
+conferir(concorrentes.every((r) => r.status === 200), 'duas reordenacoes simultaneas sao aceitas')
+conferir(
+  depoisDaConcorrencia === ordemFinal.join(',') || depoisDaConcorrencia === ordemAlternativa.join(','),
+  'concorrencia preserva uma ordem completa (a ultima gravacao vence)',
+)
+
+const outroNaoOrdena = await req(
+  'PUT',
+  `/os/${atividade.corpo.os.id}/checklist/ordem`,
+  { itemIds: ordemFinal },
+  outro.corpo.token,
+)
+conferir(outroNaoOrdena.status === 404, `outro tenant nao reordena checklist (${outroNaoOrdena.status})`)
+
 const doColab = await req('GET', '/notificacoes', undefined, tokenColab)
 conferir(doColab.corpo.naoLidas === 1, `responsavel recebe a atribuicao (${doColab.corpo.naoLidas})`)
 conferir(

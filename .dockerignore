@@ -1,8 +1,14 @@
-node_modules
-dist
+# Segredos e arquivos por ambiente sempre sao injetados pelo processo de deploy.
+.env
 .env.*
 !.env.example
-!.env.vps.example
-.git
+!.env.deploy.example
+
+node_modules
+dist
 uploads
 *.log
+.git
+.gitignore
+Dockerfile
+.dockerignore

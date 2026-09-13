@@ -19,14 +19,15 @@
     "db:seed": "tsx src/db/seed.ts",
     "env:check": "tsx src/scripts/verificar-env.ts",
     "env:check:dist": "node dist/scripts/verificar-env.js",
-    "teste": "node testes/aprovacao.mjs && node testes/anexos.mjs && node testes/equipe.mjs && node testes/grupos.mjs",
+    "teste": "node testes/aprovacao.mjs && node testes/anexos.mjs && node testes/equipe.mjs && node testes/grupos.mjs && node testes/doc.mjs",
     "teste:aprovacao": "node testes/aprovacao.mjs",
     "teste:anexos": "node testes/anexos.mjs",
     "teste:links": "node testes/links.mjs",
     "teste:equipe": "node testes/equipe.mjs",
     "db:limpar-testes": "tsx src/scripts/limpar-testes.ts",
     "teste:grupos": "node testes/grupos.mjs",
-    "teste:corrente": "node testes/corrente-publica.mjs"
+    "teste:corrente": "node testes/corrente-publica.mjs",
+    "teste:doc": "node testes/doc.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",

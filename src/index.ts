@@ -14,6 +14,8 @@ import {
   origensPermitidas,
   relatorioEnv,
 } from './env.js'
+import { doc } from './lib/doc.js'
+import { saudeSchema, vivoSchema } from './lib/esquemas.js'
 import { ErroApp, responderErro } from './lib/http.js'
 import { rotasAprovacao } from './routes/aprovacao.js'
 import { rotasAuth } from './routes/auth.js'
@@ -67,8 +69,29 @@ await app.register(swagger, {
         bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
       },
     },
+    // padrao: rota exige JWT. As publicas zeram com `security: []` no proprio
+    // schema, o que e mais seguro do que listar uma a uma quem precisa de token
+    security: [{ bearerAuth: [] }],
   },
 })
+
+/**
+ * Os schemas das rotas sao contrato, nao guarda.
+ *
+ * A validacao de entrada e do zod, dentro do handler, via `validar()`: e de la
+ * que sai a mensagem em portugues com o nome do campo. Deixar o ajv validar
+ * tambem criaria duas verdades sobre o mesmo corpo — e a que responderia
+ * primeiro seria a de mensagem pior.
+ */
+app.setValidatorCompiler(() => (dados) => ({ value: dados }))
+
+/**
+ * Idem na saida: o `response` do schema documenta, nao filtra. O serializador
+ * padrao do Fastify apaga silenciosamente todo campo ausente do schema — um
+ * esquecimento na documentacao viraria um campo sumido em producao, sem erro
+ * nenhum para avisar. `JSON.stringify` mantem a resposta identica a de hoje.
+ */
+app.setSerializerCompiler(() => (payload) => JSON.stringify(payload))
 
 await app.register(swaggerUi, {
   routePrefix: '/doc',
@@ -135,37 +158,16 @@ app.setErrorHandler(async (erro, _req, reply) => {
 })
 
 app.get('/health', {
-  schema: {
-    tags: ['Sistema'],
-    summary: 'Verifica disponibilidade da API e dependencias',
-    response: {
-      200: {
-        type: 'object',
-        required: ['ok', 'servico', 'ambiente', 'banco', 'storage', 'limites', 'em'],
-        properties: {
-          ok: { type: 'boolean' },
-          servico: { type: 'string', example: 'sysaceite-api' },
-          ambiente: { type: 'string', example: 'development' },
-          banco: {
-            type: 'object',
-            required: ['conectado', 'latenciaMs'],
-            properties: {
-              conectado: { type: 'boolean' },
-              versao: { type: 'string' },
-              latenciaMs: { type: 'number' },
-            },
-          },
-          storage: { type: 'string' },
-          limites: {
-            type: 'object',
-            required: ['anexoBytes'],
-            properties: { anexoBytes: { type: 'integer' } },
-          },
-          em: { type: 'string', format: 'date-time' },
-        },
-      },
-    },
-  },
+  schema: doc({
+    tag: 'Sistema',
+    resumo: 'Readiness — estado da API, do banco e do storage',
+    descricao:
+      'Banco fora do ar responde 200 com `banco.conectado: false`. Um 500 aqui seria ' +
+      'indistinguivel de API morta, e e exatamente a diferenca que esta rota existe para mostrar. ' +
+      'Para a sonda do deploy use `/healthz`.',
+    publico: true,
+    ok: { schema: saudeSchema },
+  }),
 }, async () => {
   // pingBanco no lugar de verificarConexao: banco fora vira `conectado: false`,
   // nao 500 nem requisicao pendurada. Quem consulta /health quer saber o estado,
@@ -196,21 +198,15 @@ app.get('/health', {
  * coisa: o processo esta escutando e roteando.
  */
 app.get('/healthz', {
-  schema: {
-    tags: ['Sistema'],
-    summary: 'Liveness — responde sem consultar dependencias',
-    response: {
-      200: {
-        type: 'object',
-        required: ['ok', 'servico', 'em'],
-        properties: {
-          ok: { type: 'boolean' },
-          servico: { type: 'string', example: 'sysaceite-api' },
-          em: { type: 'string', format: 'date-time' },
-        },
-      },
-    },
-  },
+  schema: doc({
+    tag: 'Sistema',
+    resumo: 'Liveness — responde sem consultar dependencia nenhuma',
+    descricao:
+      'E o caminho que a sonda do deploy consulta. 200 aqui significa exatamente uma coisa: ' +
+      'o processo esta escutando e roteando.',
+    publico: true,
+    ok: { schema: vivoSchema },
+  }),
 }, async () => ({ ok: true, servico: 'sysaceite-api', em: new Date().toISOString() }))
 
 await app.register(rotasAuth)

@@ -7,9 +7,6 @@ RUN npm ci
 COPY tsconfig.json drizzle.config.ts ./
 COPY src ./src
 COPY drizzle ./drizzle
-# O .env da raiz e versionado para o ambiente de desenvolvimento e precisa
-# estar nesta imagem para o carregador da API e as migrations encontrarem-no.
-COPY .env ./.env
 RUN npm run build
 
 # Imagem de uso unico para aplicar migrations durante o deploy. Mantem as
@@ -27,7 +24,6 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/drizzle ./drizzle
-COPY --from=build /app/.env ./.env
 
 RUN mkdir -p /app/uploads && chown -R node:node /app
 USER node
