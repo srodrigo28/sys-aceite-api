@@ -143,6 +143,11 @@ export const osSchema = z.object({
     .optional()
     .describe('Todos os responsaveis. O primeiro e o principal.'),
   solicitante: z.string().nullable(),
+  previstoInicioEm: dataHora().nullable().describe('Planejamento — nao alimenta o SLA'),
+  previstoFimEm: dataHora().nullable().describe('Planejamento — nao alimenta o SLA'),
+  minutosEstimados: z.number().int().nullable().describe('Minutos, nunca horas em float'),
+  minutosApontados: z.number().int().describe('Minutos, nunca horas em float'),
+  observacoes: z.string().nullable(),
   abertaEm: dataHora(),
   inicioAtendimentoEm: dataHora().nullable(),
   primeiraRespostaEm: dataHora().nullable(),

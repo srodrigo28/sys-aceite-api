@@ -156,7 +156,31 @@ export const atividades = pgTable('atividades', {
     // A API continua devolvendo `responsavelId` na resposta, mas DERIVADO do
     // principal: uma fonte, duas representacoes.
     solicitante: text('solicitante'),
-    // relogios de SLA
+    /**
+     * PLANEJAMENTO — nao confundir com os relogios de SLA logo abaixo.
+     *
+     * Sao duas linhas do tempo distintas: estas datas sao o que se PRETENDE
+     * fazer; `inicio_atendimento_em` e `concluida_em` sao o que ACONTECEU. O
+     * cronograma desenha estas; o SLA e a fatura contam aquelas.
+     *
+     * Se o replanejamento escrevesse nos campos de execucao, mudar a data de
+     * uma atividade "consertaria" um SLA estourado sozinho.
+     */
+    previstoInicioEm: timestamp('previsto_inicio_em', { withTimezone: true }),
+    previstoFimEm: timestamp('previsto_fim_em', { withTimezone: true }),
+    /**
+     * Minutos inteiros, nunca horas em float.
+     *
+     * `1.1h + 2.2h` em ponto flutuante nao fecha com o que a pessoa digitou, e
+     * em cima de fatura isso vira discussao com cliente. A conversao para
+     * "3h 30min" e formatacao de tela. Mesma escolha de `minutos_pausados` e
+     * `minutos_resolucao`.
+     */
+    minutosEstimados: integer('minutos_estimados'),
+    minutosApontados: integer('minutos_apontados').notNull().default(0),
+    /** Texto livre que aparece na listagem — diferente de `descricao`. */
+    observacoes: text('observacoes'),
+    // relogios de SLA — o que ACONTECEU
     abertaEm: timestamp('aberta_em', { withTimezone: true }).notNull().defaultNow(),
     inicioAtendimentoEm: timestamp('inicio_atendimento_em', { withTimezone: true }),
     primeiraRespostaEm: timestamp('primeira_resposta_em', { withTimezone: true }),

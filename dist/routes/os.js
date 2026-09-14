@@ -35,6 +35,13 @@ const criarSchema = z.object({
      * vem sozinho, vira uma lista de um. Sai quando o web parar de mandar.
      */
     responsaveisIds: z.array(z.string().uuid()).optional(),
+    /** Planejamento. Nao alimenta o SLA — isso e dos campos de execucao. */
+    previstoInicioEm: z.coerce.date().nullish(),
+    previstoFimEm: z.coerce.date().nullish(),
+    /** Inteiros. A tela oferece de 1h a 10h; a API aceita qualquer valor >= 0. */
+    minutosEstimados: z.number().int().min(0).nullish(),
+    minutosApontados: z.number().int().min(0).optional(),
+    observacoes: z.string().max(2000).nullish(),
     solicitante: z.string().max(120).nullish(),
 });
 const atualizarSchema = criarSchema.partial().omit({ projetoId: true, status: true });
@@ -158,6 +165,20 @@ async function validarResponsavel(projetoId, responsavelId, req) {
     });
     if (!membro)
         throw invalido('O responsavel precisa participar deste projeto.');
+}
+/**
+ * Fim nao pode vir antes do inicio.
+ *
+ * Confere contra o que a atividade JA tem, e nao so contra o que veio no corpo:
+ * um PATCH que mande apenas `previstoFimEm` precisa ser comparado com o inicio
+ * ja gravado, senao da para inverter o intervalo em duas requisicoes.
+ */
+function validarPeriodo(novo, atual) {
+    const inicio = novo.previstoInicioEm !== undefined ? novo.previstoInicioEm : atual?.previstoInicioEm;
+    const fim = novo.previstoFimEm !== undefined ? novo.previstoFimEm : atual?.previstoFimEm;
+    if (inicio && fim && fim < inicio) {
+        throw invalido('A data de fim nao pode ser anterior a de inicio.');
+    }
 }
 /** A mesma regra, pessoa por pessoa. Lista vazia e valida: atividade sem dono. */
 async function validarResponsaveis(projetoId, ids, req) {
@@ -284,6 +305,7 @@ export async function rotasOs(app) {
             throw naoEncontrado('Projeto');
         const escolhidos = dados.responsaveisIds ?? (dados.responsavelId ? [dados.responsavelId] : []);
         await validarResponsaveis(dados.projetoId, escolhidos, req);
+        validarPeriodo(dados);
         const agora = new Date();
         // nenhuma das duas e coluna: `responsaveisIds` nunca foi, e `responsavelId`
         // deixou de ser. O Drizzle ignorava a primeira em silencio — explicito e melhor.
@@ -433,6 +455,7 @@ export async function rotasOs(app) {
                 : undefined);
         if (novaLista)
             await validarResponsaveis(antes.projetoId, novaLista, req);
+        validarPeriodo(dados, antes);
         const { responsavelId: _principal, responsaveisIds: _lista, ...campos } = dados;
         const [atualizada] = await db
             .update(atividades)
