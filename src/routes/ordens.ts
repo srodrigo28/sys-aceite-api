@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { db } from '../db/client.js'
-import { atividades, ordensServico, projetos, usuarios } from '../db/schema.js'
+import { atividadeResponsaveis, atividades, ordensServico, projetos, usuarios } from '../db/schema.js'
 import { autenticar, projetosVisiveis, somenteAdmin, usuarioAtual } from '../lib/auth.js'
 import { doc } from '../lib/doc.js'
 import { invalido, naoEncontrado, validar } from '../lib/http.js'
@@ -145,6 +145,25 @@ export async function rotasOrdens(app: FastifyInstance): Promise<void> {
       columns: { nome: true, cliente: true },
     })
 
+    // quem responde por cada atividade, num mapa: o mapa de colaboradores da
+    // tela precisa saber em quais linhas cada atividade aparece
+    const vinculos = lista.length
+      ? await db
+          .select({
+            atividadeId: atividadeResponsaveis.atividadeId,
+            usuarioId: atividadeResponsaveis.usuarioId,
+            principal: atividadeResponsaveis.principal,
+          })
+          .from(atividadeResponsaveis)
+          .where(inArray(atividadeResponsaveis.atividadeId, lista.map((a) => a.id)))
+      : []
+
+    const responsaveis: Record<string, string[]> = {}
+    // principal primeiro: o front usa o [0] onde so cabe um nome
+    for (const v of vinculos.sort((a, b) => Number(b.principal) - Number(a.principal))) {
+      responsaveis[v.atividadeId] = [...(responsaveis[v.atividadeId] ?? []), v.usuarioId]
+    }
+
     return {
       ordem: {
         ...ordem,
@@ -153,7 +172,7 @@ export async function rotasOrdens(app: FastifyInstance): Promise<void> {
         totais: await totaisDaOs(id),
       },
       atividades: lista,
-      responsaveis: {},
+      responsaveis,
     }
   })
 
