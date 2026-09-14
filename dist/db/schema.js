@@ -149,7 +149,12 @@ export const atividades = pgTable('atividades', {
     nivel: nivelEnum('nivel').notNull().default('n1'),
     status: statusOsEnum('status').notNull().default('a_fazer'),
     ordem: integer('ordem').notNull().default(0),
-    responsavelId: uuid('responsavel_id').references(() => usuarios.id, { onDelete: 'set null' }),
+    // `responsavel_id` saiu: quem responde pela atividade vive em
+    // `atividade_responsaveis`. Enquanto os dois existiam, um PATCH que mandasse
+    // so a lista deixava a coluna com o valor velho — duas fontes de verdade que
+    // divergem, que e exatamente o que a nota de `grupos` alerta.
+    // A API continua devolvendo `responsavelId` na resposta, mas DERIVADO do
+    // principal: uma fonte, duas representacoes.
     solicitante: text('solicitante'),
     // relogios de SLA
     abertaEm: timestamp('aberta_em', { withTimezone: true }).notNull().defaultNow(),
@@ -459,7 +464,7 @@ export const projetosRelations = relations(projetos, ({ one, many }) => ({
 export const atividadesRelations = relations(atividades, ({ one, many }) => ({
     projeto: one(projetos, { fields: [atividades.projetoId], references: [projetos.id] }),
     categoria: one(categorias, { fields: [atividades.categoriaId], references: [categorias.id] }),
-    responsavel: one(usuarios, { fields: [atividades.responsavelId], references: [usuarios.id] }),
+    responsaveis: many(atividadeResponsaveis),
     checklist: many(checklistItens),
     anexos: many(anexos),
     comentarios: many(comentarios),

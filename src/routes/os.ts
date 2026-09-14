@@ -255,6 +255,17 @@ async function definirResponsaveis(
   return unicos.filter((id) => !jaEstavam.has(id))
 }
 
+/**
+ * Monta a atividade para a resposta.
+ *
+ * `responsavelId` nao e mais coluna: sai daqui, derivado do primeiro da lista.
+ * Mantido porque cliente com bundle antigo em cache ainda o le — e como ele
+ * agora e DERIVADO, nao ha duas fontes de verdade para divergir.
+ */
+function comResponsaveis<T extends object>(os: T, ids: string[]) {
+  return { ...os, responsavelId: ids[0] ?? null, responsaveis: ids }
+}
+
 /** Os responsaveis de varias atividades de uma vez, para as listas. */
 async function responsaveisDe(ids: string[]): Promise<Map<string, string[]>> {
   const mapa = new Map<string, string[]>()
@@ -320,8 +331,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
       projeto,
       categorias: cats,
       ordens: lista.map((os) => ({
-        ...os,
-        responsaveis: porAtividade.get(os.id) ?? [],
+        ...comResponsaveis(os, porAtividade.get(os.id) ?? []),
         sla: calcularSla(os, politicas, cats, agora),
       })),
     }
@@ -353,10 +363,13 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     await validarResponsaveis(dados.projetoId, escolhidos, req)
 
     const agora = new Date()
+    // nenhuma das duas e coluna: `responsaveisIds` nunca foi, e `responsavelId`
+    // deixou de ser. O Drizzle ignorava a primeira em silencio — explicito e melhor.
+    const { responsavelId: _p, responsaveisIds: _l, ...camposNovos } = dados
     const [criada] = await db
       .insert(atividades)
       .values({
-        ...dados,
+        ...camposNovos,
         tenantId,
         codigo: await gerarCodigo(tenantId),
         abertaEm: agora,
@@ -386,7 +399,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
       })
     }
 
-    return reply.code(201).send({ os: { ...criada, responsaveis: escolhidos } })
+    return reply.code(201).send({ os: comResponsaveis(criada, escolhidos) })
   })
 
   /** Atividades atribuídas ao usuário logado, agrupáveis por status no front. */
@@ -423,8 +436,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     const porAtividade = await responsaveisDe(lista.map((o) => o.id))
     return {
       ordens: lista.map((os) => ({
-        ...os,
-        responsaveis: porAtividade.get(os.id) ?? [],
+        ...comResponsaveis(os, porAtividade.get(os.id) ?? []),
         sla: calcularSla(os, politicas, cats, new Date()),
       })),
     }
@@ -480,8 +492,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
 
     return {
       os: {
-        ...os,
-        responsaveis: (await responsaveisDe([os.id])).get(os.id) ?? [],
+        ...comResponsaveis(os, (await responsaveisDe([os.id])).get(os.id) ?? []),
         sla: calcularSla(os, politicas, cats, new Date()),
       },
       checklist,
@@ -518,7 +529,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
         : undefined)
     if (novaLista) await validarResponsaveis(antes.projetoId, novaLista, req)
 
-    const { responsaveisIds: _lista, ...campos } = dados
+    const { responsavelId: _principal, responsaveisIds: _lista, ...campos } = dados
     const [atualizada] = await db
       .update(atividades)
       .set({ ...campos, atualizadoEm: new Date() })
@@ -546,7 +557,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
       })
     }
     const responsaveis = novaLista ?? (await responsaveisDe([id])).get(id) ?? []
-    return { os: { ...atualizada, responsaveis } }
+    return { os: comResponsaveis(atualizada, responsaveis) }
   })
 
   /** Movimento do Kanban. Sempre manual — a aprovacao nao move o card sozinha. */
@@ -575,7 +586,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
 
     const responsaveisAtuais = (await responsaveisDe([os.id])).get(os.id) ?? []
     if (os.status === status && ordem === undefined) {
-      return { os: { ...os, responsaveis: responsaveisAtuais } }
+      return { os: comResponsaveis(os, responsaveisAtuais) }
     }
 
     const agora = new Date()
@@ -605,7 +616,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
         autorNome: nome,
       })
     }
-    return { os: { ...atualizada, responsaveis: responsaveisAtuais } }
+    return { os: comResponsaveis(atualizada, responsaveisAtuais) }
   })
 
   app.delete('/atividades/:id', {
