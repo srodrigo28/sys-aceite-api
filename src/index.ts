@@ -22,6 +22,7 @@ import { rotasAuth } from './routes/auth.js'
 import { rotasEquipe } from './routes/equipe.js'
 import { rotasGrupos } from './routes/grupos.js'
 import { rotasNotificacoes } from './routes/notificacoes.js'
+import { rotasOrdens } from './routes/ordens.js'
 import { rotasOs } from './routes/os.js'
 import { rotasProjetos } from './routes/projetos.js'
 import { rotasPublicas } from './routes/publico.js'
@@ -226,6 +227,7 @@ await app.register(rotasAuth)
 await app.register(rotasPublicas)
 await app.register(rotasProjetos)
 await app.register(rotasOs)
+await app.register(rotasOrdens)
 await app.register(rotasSla)
 await app.register(rotasAprovacao)
 await app.register(rotasEquipe)

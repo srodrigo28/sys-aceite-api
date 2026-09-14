@@ -13,6 +13,14 @@ export const statusOsEnum = pgEnum('status_os', [
     'finalizado',
 ]);
 export const tipoOsEnum = pgEnum('tipo_os', ['evento', 'tarefa']);
+/** O fluxo da O.S. de faturamento. Cinco passos, cada um com sua data. */
+export const statusOrdemEnum = pgEnum('status_ordem', [
+    'aberta',
+    'em_execucao',
+    'em_revisao',
+    'aprovada',
+    'finalizada',
+]);
 export const papelEnum = pgEnum('papel', ['admin', 'membro']);
 export const estadoLinkEnum = pgEnum('estado_link', [
     'pendente',
@@ -180,6 +188,14 @@ export const atividades = pgTable('atividades', {
     minutosApontados: integer('minutos_apontados').notNull().default(0),
     /** Texto livre que aparece na listagem — diferente de `descricao`. */
     observacoes: text('observacoes'),
+    /**
+     * A O.S. do mes. DERIVADA, nao escolhida: vem do mes de
+     * `previsto_inicio_em`, ou de `aberta_em` quando nao ha previsao.
+     *
+     * Nullable por enquanto — vira NOT NULL depois que a API no ar estiver
+     * atribuindo em toda criacao.
+     */
+    osId: uuid('os_id').references(() => ordensServico.id, { onDelete: 'set null' }),
     // relogios de SLA — o que ACONTECEU
     abertaEm: timestamp('aberta_em', { withTimezone: true }).notNull().defaultNow(),
     inicioAtendimentoEm: timestamp('inicio_atendimento_em', { withTimezone: true }),
@@ -198,6 +214,49 @@ export const atividades = pgTable('atividades', {
     uniqueIndex('os_tenant_codigo_idx').on(t.tenantId, t.codigo),
     index('os_projeto_status_idx').on(t.projetoId, t.status),
     index('os_tenant_idx').on(t.tenantId),
+]);
+/**
+ * A ordem de servico: a FATURA do mes.
+ *
+ * Nao e trabalho — trabalho e `atividades`. Aqui nao ha SLA, prioridade, nem
+ * coluna de kanban. Ela existe para agrupar as atividades de um projeto num
+ * mes e somar as horas.
+ *
+ * NASCE SOZINHA. Ninguem cria O.S. a mao nem a escolhe em formulario: ela e a
+ * caixa do mes, unica por `(projeto, ano, mes)`. Uma atividade cai na O.S. do
+ * mes da sua data prevista — ou da data de abertura, quando nao ha previsao.
+ * Sem esse fallback, atividade sem planejamento ficaria sem O.S.
+ *
+ * Os totais (horas, contagem) sao calculados na leitura, nunca gravados:
+ * numero somado e guardado desencontra do que ele soma.
+ */
+export const ordensServico = pgTable('ordens_servico', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+        .notNull()
+        .references(() => tenants.id, { onDelete: 'cascade' }),
+    projetoId: uuid('projeto_id')
+        .notNull()
+        .references(() => projetos.id, { onDelete: 'cascade' }),
+    codigo: text('codigo').notNull(),
+    ano: integer('ano').notNull(),
+    mes: integer('mes').notNull(),
+    status: statusOrdemEnum('status').notNull().default('aberta'),
+    responsavelId: uuid('responsavel_id').references(() => usuarios.id, { onDelete: 'set null' }),
+    observacao: text('observacao'),
+    // uma data por passo do fluxo — o stepper mostra cada uma
+    abertaEm: timestamp('aberta_em', { withTimezone: true }).notNull().defaultNow(),
+    execucaoEm: timestamp('execucao_em', { withTimezone: true }),
+    revisaoEm: timestamp('revisao_em', { withTimezone: true }),
+    aprovadaEm: timestamp('aprovada_em', { withTimezone: true }),
+    finalizadaEm: timestamp('finalizada_em', { withTimezone: true }),
+    criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+    atualizadoEm: timestamp('atualizado_em', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    // a regra do modelo, no banco: uma O.S. por projeto por mes
+    uniqueIndex('ordens_projeto_periodo_idx').on(t.projetoId, t.ano, t.mes),
+    uniqueIndex('ordens_tenant_codigo_idx').on(t.tenantId, t.codigo),
+    index('ordens_tenant_idx').on(t.tenantId),
 ]);
 /**
  * Quem responde por uma atividade. Uma atividade pode ter varios.

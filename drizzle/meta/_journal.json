@@ -85,6 +85,13 @@
       "when": 1789140000000,
       "tag": "0011_datas_horas_observacoes",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789150000000,
+      "tag": "0012_ordens_servico",
+      "breakpoints": true
     }
   ]
 }

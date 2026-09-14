@@ -6,6 +6,7 @@ import { anexoTamanhoMax } from '../env.js';
 import { anexoPublico, arquivosDoAnexo, MAX_ANEXOS_POR_OS, responderArquivo, validarArquivo, versaoParaServir, } from '../lib/anexo.js';
 import { encolherParaLimite, gerarMiniatura, podeGerarMiniatura } from '../lib/imagem.js';
 import { interessadosNaOs, notificar } from '../lib/notificacao.js';
+import { garantirOsDoMes, periodoDaAtividade } from '../lib/ordem.js';
 import { autenticar, contexto, garantirAcessoProjeto, projetosVisiveis, } from '../lib/auth.js';
 import { apagar, baixar, enviar } from '../lib/bucket.js';
 import { doc } from '../lib/doc.js';
@@ -324,6 +325,10 @@ export async function rotasOs(app) {
             .returning();
         if (!criada)
             throw invalido('Nao foi possivel criar a O.S.');
+        // a atividade cai na O.S. do mes sozinha — ninguem escolhe O.S. em formulario
+        const osDoMes = await garantirOsDoMes(tenantId, criada.projetoId, criada);
+        await db.update(atividades).set({ osId: osDoMes }).where(eq(atividades.id, criada.id));
+        criada.osId = osDoMes;
         const entraram = await definirResponsaveis(criada.id, escolhidos);
         await registrar(criada.id, 'criacao', `O.S. aberta em ${projeto.nome}`, nome);
         // atividade ja nasce atribuida: avisa quem vai tocar
@@ -464,6 +469,13 @@ export async function rotasOs(app) {
             .returning();
         if (!atualizada)
             throw naoEncontrado('O.S.');
+        // so a data de INICIO move a atividade de fatura; mexer no fim nunca move
+        if (dados.previstoInicioEm !== undefined &&
+            periodoDaAtividade(atualizada).mes !== periodoDaAtividade(antes).mes) {
+            const osNova = await garantirOsDoMes(tenantId, atualizada.projetoId, atualizada);
+            await db.update(atividades).set({ osId: osNova }).where(eq(atividades.id, id));
+            atualizada.osId = osNova;
+        }
         const entraram = novaLista ? await definirResponsaveis(id, novaLista) : [];
         await registrar(id, 'edicao', 'O.S. atualizada', nome);
         // so quem ENTROU e avisado. Notificar a lista inteira a cada edicao faria

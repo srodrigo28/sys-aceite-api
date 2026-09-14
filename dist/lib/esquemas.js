@@ -130,6 +130,7 @@ export const osSchema = z.object({
     minutosEstimados: z.number().int().nullable().describe('Minutos, nunca horas em float'),
     minutosApontados: z.number().int().describe('Minutos, nunca horas em float'),
     observacoes: z.string().nullable(),
+    osId: uuid().nullable().describe('A O.S. do mes — derivada, nao escolhida'),
     abertaEm: dataHora(),
     inicioAtendimentoEm: dataHora().nullable(),
     primeiraRespostaEm: dataHora().nullable(),
