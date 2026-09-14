@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import { db, fecharConexao } from './client.js';
-import { categorias, comentarios, historico, ordensServico, politicasSla, projetoMembros, projetos, tenants, usuarios, } from './schema.js';
+import { categorias, comentarios, historico, atividades, politicasSla, projetoMembros, projetos, tenants, usuarios, } from './schema.js';
 import { SLA_PADRAO } from '../lib/sla.js';
 const SLUG_DEMO = 'estudio-demo';
 const EMAIL_DEMO = 'demo@sysaceite.dev';
@@ -155,7 +155,7 @@ async function semear() {
             minutosPausados: status === 'pausado' ? 120 : 0,
         };
     });
-    const ordens = await db.insert(ordensServico).values(valores).returning();
+    const ordens = await db.insert(atividades).values(valores).returning();
     console.log(`  - ${ordens.length} ordens de servico`);
     // um pouco de conversa e historico nas primeiras O.S.
     const conversa = ordens.slice(0, 6).flatMap((os, i) => [

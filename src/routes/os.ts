@@ -217,7 +217,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', autenticar)
 
   /** Quadro Kanban de um projeto: todas as O.S. com o SLA ja calculado. */
-  app.get('/projetos/:id/os', {
+  app.get('/projetos/:id/atividades', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'Quadro Kanban do projeto, com o SLA ja calculado',
@@ -261,7 +261,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     }
   })
 
-  app.post('/os', {
+  app.post('/atividades', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'Abre uma O.S. (evento ou tarefa)',
@@ -321,7 +321,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
   })
 
   /** Atividades atribuídas ao usuário logado, agrupáveis por status no front. */
-  app.get('/os/minhas', {
+  app.get('/atividades/minhas', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'As O.S. em que voce e o responsavel',
@@ -344,7 +344,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
   })
 
   /** Detalhe completo: filhos + SLA + links de aprovacao. */
-  app.get('/os/:id', {
+  app.get('/atividades/:id', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'Detalhe completo: filhos, SLA e links de aprovacao',
@@ -401,7 +401,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     }
   })
 
-  app.patch('/os/:id', {
+  app.patch('/atividades/:id', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'Edita a O.S.',
@@ -448,7 +448,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
   })
 
   /** Movimento do Kanban. Sempre manual — a aprovacao nao move o card sozinha. */
-  app.patch('/os/:id/status', {
+  app.patch('/atividades/:id/status', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'Move o card no Kanban',
@@ -503,7 +503,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     return { os: atualizada }
   })
 
-  app.delete('/os/:id', {
+  app.delete('/atividades/:id', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'Apaga a O.S.',
@@ -531,7 +531,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
 
   /* ---------------------------- comentarios ---------------------------- */
 
-  app.post('/os/:id/comentarios', {
+  app.post('/atividades/:id/comentarios', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'Comenta na O.S.',
@@ -586,7 +586,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
   /* ------------------------------ anexos ------------------------------- */
 
   /** Upload multipart. O arquivo vai para o bucket (ou disco) e so a linha fica no banco. */
-  app.post('/os/:id/anexos', {
+  app.post('/atividades/:id/anexos', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'Envia um anexo (multipart)',
@@ -756,7 +756,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     })
   })
 
-  app.delete('/os/:id/anexos/:anexoId', {
+  app.delete('/atividades/:id/anexos/:anexoId', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'Remove um anexo',
@@ -789,7 +789,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
 
   /* ----------------------------- checklist ----------------------------- */
 
-  app.post('/os/:id/checklist', {
+  app.post('/atividades/:id/checklist', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'Acrescenta um item ao checklist',
@@ -808,7 +808,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     return reply.code(201).send({ item: criado })
   })
 
-  app.patch('/os/:id/checklist/:itemId', {
+  app.patch('/atividades/:id/checklist/:itemId', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'Edita o texto ou marca o item como feito',
@@ -836,7 +836,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     return { item: atualizado }
   })
 
-  app.put('/os/:id/checklist/ordem', {
+  app.put('/atividades/:id/checklist/ordem', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'Reordena todo o checklist',
@@ -879,7 +879,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     return { itens }
   })
 
-  app.delete('/os/:id/checklist/:itemId', {
+  app.delete('/atividades/:id/checklist/:itemId', {
     schema: doc({
       tag: 'Ordens de servico',
       resumo: 'Remove um item do checklist',

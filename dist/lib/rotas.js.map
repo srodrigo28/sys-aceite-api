@@ -1,0 +1,1 @@
+{"version":3,"file":"rotas.js","sourceRoot":"","sources":["../../src/lib/rotas.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;;;;;;;;;;;GAoBG;AACH,MAAM,UAAU,mBAAmB,CAAC,GAAW;IAC7C,OAAO,GAAG;SACP,OAAO,CAAC,iBAAiB,EAAE,aAAa,CAAC;SACzC,OAAO,CAAC,qCAAqC,EAAE,eAAe,CAAC,CAAA;AACpE,CAAC"}

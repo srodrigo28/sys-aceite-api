@@ -1,7 +1,7 @@
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { categorias, ordensServico, politicasSla, projetoMembros, projetos, } from '../db/schema.js';
+import { categorias, atividades, politicasSla, projetoMembros, projetos, } from '../db/schema.js';
 import { autenticar, garantirAcessoProjeto, projetosVisiveis } from '../lib/auth.js';
 import { doc } from '../lib/doc.js';
 import { projetoSchema, slaSchema, uuidParam } from '../lib/esquemas.js';
@@ -73,17 +73,17 @@ export async function rotasProjetos(app) {
             orderBy: (p, { desc }) => [desc(p.criadoEm)],
         });
         const filtroOs = visiveis === 'todos'
-            ? eq(ordensServico.tenantId, tenantId)
-            : and(eq(ordensServico.tenantId, tenantId), inArray(ordensServico.projetoId, visiveis));
+            ? eq(atividades.tenantId, tenantId)
+            : and(eq(atividades.tenantId, tenantId), inArray(atividades.projetoId, visiveis));
         const contagens = await db
             .select({
-            projetoId: ordensServico.projetoId,
-            status: ordensServico.status,
+            projetoId: atividades.projetoId,
+            status: atividades.status,
             total: count(),
         })
-            .from(ordensServico)
+            .from(atividades)
             .where(filtroOs)
-            .groupBy(ordensServico.projetoId, ordensServico.status);
+            .groupBy(atividades.projetoId, atividades.status);
         return {
             projetos: lista.map((p) => ({
                 ...p,
@@ -181,9 +181,9 @@ export async function rotasProjetos(app) {
         // cascade: projeto -> O.S. -> anexos. As linhas o banco leva; os arquivos
         // no bucket ficariam orfaos para sempre se ninguem apagasse aqui.
         const doProjeto = await db
-            .select({ id: ordensServico.id })
-            .from(ordensServico)
-            .where(eq(ordensServico.projetoId, id));
+            .select({ id: atividades.id })
+            .from(atividades)
+            .where(eq(atividades.projetoId, id));
         await apagarArquivosDasOs(doProjeto.map((o) => o.id));
         const [removido] = await db
             .delete(projetos)
@@ -213,10 +213,10 @@ export async function rotasProjetos(app) {
             };
         }
         const filtroAbertas = visiveis === 'todos'
-            ? and(eq(ordensServico.tenantId, tenantId), sql `${ordensServico.status} <> 'finalizado'`)
-            : and(eq(ordensServico.tenantId, tenantId), inArray(ordensServico.projetoId, visiveis), sql `${ordensServico.status} <> 'finalizado'`);
+            ? and(eq(atividades.tenantId, tenantId), sql `${atividades.status} <> 'finalizado'`)
+            : and(eq(atividades.tenantId, tenantId), inArray(atividades.projetoId, visiveis), sql `${atividades.status} <> 'finalizado'`);
         const [abertas, politicas, cats] = await Promise.all([
-            db.query.ordensServico.findMany({ where: filtroAbertas }),
+            db.query.atividades.findMany({ where: filtroAbertas }),
             db.query.politicasSla.findMany({ where: eq(politicasSla.tenantId, tenantId) }),
             db.query.categorias.findMany({ where: eq(categorias.tenantId, tenantId) }),
         ]);

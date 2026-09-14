@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { anexos, categorias, comentarios, convites, conviteProjetos, historico, linksAprovacao, ordensServico, politicasSla, projetoMembros, projetos, tenants, usuarios, } from '../db/schema.js';
+import { anexos, categorias, comentarios, convites, conviteProjetos, historico, linksAprovacao, atividades, politicasSla, projetoMembros, projetos, tenants, usuarios, } from '../db/schema.js';
 import { ehImagem, responderArquivo, versaoParaServir } from '../lib/anexo.js';
 import { baixar } from '../lib/bucket.js';
 import { doc } from '../lib/doc.js';
@@ -149,7 +149,7 @@ export async function rotasPublicas(app) {
         if (!link)
             throw naoEncontrado('Link de aprovacao');
         const estado = estadoEfetivo(link);
-        const os = await db.query.ordensServico.findFirst({ where: eq(ordensServico.id, link.osId) });
+        const os = await db.query.atividades.findFirst({ where: eq(atividades.id, link.osId) });
         if (!os)
             throw naoEncontrado('O.S.');
         const [projeto, tenant, categoria] = await Promise.all([
@@ -322,7 +322,7 @@ export async function rotasPublicas(app) {
             if (!gravado)
                 throw invalido('Este link ja recebeu um parecer.');
             await tx
-                .update(ordensServico)
+                .update(atividades)
                 .set({
                 aprovado,
                 aprovadorNome: dados.aprovadorNome.trim(),
@@ -330,7 +330,7 @@ export async function rotasPublicas(app) {
                 aprovadoEm: agora,
                 atualizadoEm: agora,
             })
-                .where(eq(ordensServico.id, link.osId));
+                .where(eq(atividades.id, link.osId));
             if (observacao) {
                 await tx.insert(comentarios).values({
                     osId: link.osId,
@@ -351,8 +351,8 @@ export async function rotasPublicas(app) {
         });
         // quem aprova nao e usuario do sistema: autorId fica null e o nome vai
         // como texto, para o sino mostrar quem decidiu
-        const osDoLink = await db.query.ordensServico.findFirst({
-            where: eq(ordensServico.id, link.osId),
+        const osDoLink = await db.query.atividades.findFirst({
+            where: eq(atividades.id, link.osId),
         });
         if (osDoLink) {
             await notificar({

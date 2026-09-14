@@ -2,7 +2,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { historico, linksAprovacao, ordensServico } from '../db/schema.js';
+import { historico, linksAprovacao, atividades } from '../db/schema.js';
 import { autenticar, contexto, projetosVisiveis } from '../lib/auth.js';
 import { doc } from '../lib/doc.js';
 import { linkSchema, uuidParam } from '../lib/esquemas.js';
@@ -26,8 +26,8 @@ export function montarUrlPublica(token) {
 }
 /** O.S. do tenant e, para colaborador, de projeto que ele participa. */
 async function osVisivel(id, req) {
-    const os = await db.query.ordensServico.findFirst({
-        where: and(eq(ordensServico.id, id), eq(ordensServico.tenantId, req.user.tenantId)),
+    const os = await db.query.atividades.findFirst({
+        where: and(eq(atividades.id, id), eq(atividades.tenantId, req.user.tenantId)),
     });
     if (!os)
         throw naoEncontrado('O.S.');
@@ -39,7 +39,7 @@ async function osVisivel(id, req) {
 export async function rotasAprovacao(app) {
     app.addHook('preHandler', autenticar);
     /** Gera um link secreto de aprovacao para a O.S. */
-    app.post('/os/:id/links', {
+    app.post('/atividades/:id/links', {
         schema: doc({
             tag: 'Aprovacoes',
             resumo: 'Gera um link de aprovacao para a O.S.',
@@ -83,9 +83,9 @@ export async function rotasAprovacao(app) {
             throw invalido('Nao foi possivel gerar o link.');
         if (dados.moverParaAprovacao && os.status !== 'em_aprovacao') {
             await db
-                .update(ordensServico)
+                .update(atividades)
                 .set({ status: 'em_aprovacao', atualizadoEm: new Date() })
-                .where(eq(ordensServico.id, id));
+                .where(eq(atividades.id, id));
         }
         await db.insert(historico).values({
             osId: id,
@@ -97,7 +97,7 @@ export async function rotasAprovacao(app) {
         });
         return reply.code(201).send({ link: { ...link, url: montarUrlPublica(link.token) } });
     });
-    app.get('/os/:id/links', {
+    app.get('/atividades/:id/links', {
         schema: doc({
             tag: 'Aprovacoes',
             resumo: 'Links ja gerados para a O.S., do mais novo ao mais antigo',

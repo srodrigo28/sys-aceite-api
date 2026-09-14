@@ -47,7 +47,7 @@ export async function rotasAprovacao(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', autenticar)
 
   /** Gera um link secreto de aprovacao para a O.S. */
-  app.post('/os/:id/links', {
+  app.post('/atividades/:id/links', {
     schema: doc({
       tag: 'Aprovacoes',
       resumo: 'Gera um link de aprovacao para a O.S.',
@@ -112,7 +112,7 @@ export async function rotasAprovacao(app: FastifyInstance): Promise<void> {
     return reply.code(201).send({ link: { ...link, url: montarUrlPublica(link.token) } })
   })
 
-  app.get('/os/:id/links', {
+  app.get('/atividades/:id/links', {
     schema: doc({
       tag: 'Aprovacoes',
       resumo: 'Links ja gerados para a O.S., do mais novo ao mais antigo',

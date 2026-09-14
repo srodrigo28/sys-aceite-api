@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, like, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { anexos, categorias, checklistItens, comentarios, historico, linksAprovacao, ordensServico, politicasSla, projetos, projetoMembros, usuarios, } from '../db/schema.js';
+import { anexos, categorias, checklistItens, comentarios, historico, linksAprovacao, atividades, politicasSla, projetos, projetoMembros, usuarios, } from '../db/schema.js';
 import { anexoTamanhoMax } from '../env.js';
 import { anexoPublico, arquivosDoAnexo, MAX_ANEXOS_POR_OS, responderArquivo, validarArquivo, versaoParaServir, } from '../lib/anexo.js';
 import { encolherParaLimite, gerarMiniatura, podeGerarMiniatura } from '../lib/imagem.js';
@@ -94,8 +94,8 @@ async function gerarCodigo(tenantId) {
     const prefixo = `OS-${ano}-`;
     const [linha] = await db
         .select({ total: sql `count(*)::int` })
-        .from(ordensServico)
-        .where(and(eq(ordensServico.tenantId, tenantId), like(ordensServico.codigo, `${prefixo}%`)));
+        .from(atividades)
+        .where(and(eq(atividades.tenantId, tenantId), like(atividades.codigo, `${prefixo}%`)));
     return `${prefixo}${String((linha?.total ?? 0) + 1).padStart(4, '0')}`;
 }
 async function registrar(osId, tipo, descricao, autorNome) {
@@ -125,8 +125,8 @@ export async function apagarArquivosDasOs(osIds) {
     return apagados;
 }
 async function buscarOsVisivel(id, req) {
-    const os = await db.query.ordensServico.findFirst({
-        where: and(eq(ordensServico.id, id), eq(ordensServico.tenantId, req.user.tenantId)),
+    const os = await db.query.atividades.findFirst({
+        where: and(eq(atividades.id, id), eq(atividades.tenantId, req.user.tenantId)),
     });
     if (!os)
         throw naoEncontrado('O.S.');
@@ -155,7 +155,7 @@ async function validarResponsavel(projetoId, responsavelId, req) {
 export async function rotasOs(app) {
     app.addHook('preHandler', autenticar);
     /** Quadro Kanban de um projeto: todas as O.S. com o SLA ja calculado. */
-    app.get('/projetos/:id/os', {
+    app.get('/projetos/:id/atividades', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'Quadro Kanban do projeto, com o SLA ja calculado',
@@ -181,9 +181,9 @@ export async function rotasOs(app) {
         if (!projeto)
             throw naoEncontrado('Projeto');
         const [lista, politicas, cats] = await Promise.all([
-            db.query.ordensServico.findMany({
-                where: and(eq(ordensServico.projetoId, projetoId), eq(ordensServico.tenantId, tenantId)),
-                orderBy: [asc(ordensServico.ordem), desc(ordensServico.criadoEm)],
+            db.query.atividades.findMany({
+                where: and(eq(atividades.projetoId, projetoId), eq(atividades.tenantId, tenantId)),
+                orderBy: [asc(atividades.ordem), desc(atividades.criadoEm)],
             }),
             db.query.politicasSla.findMany({ where: eq(politicasSla.tenantId, tenantId) }),
             db.query.categorias.findMany({ where: eq(categorias.tenantId, tenantId) }),
@@ -195,7 +195,7 @@ export async function rotasOs(app) {
             ordens: lista.map((os) => ({ ...os, sla: calcularSla(os, politicas, cats, agora) })),
         };
     });
-    app.post('/os', {
+    app.post('/atividades', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'Abre uma O.S. (evento ou tarefa)',
@@ -219,7 +219,7 @@ export async function rotasOs(app) {
         await validarResponsavel(dados.projetoId, dados.responsavelId, req);
         const agora = new Date();
         const [criada] = await db
-            .insert(ordensServico)
+            .insert(atividades)
             .values({
             ...dados,
             tenantId,
@@ -250,7 +250,7 @@ export async function rotasOs(app) {
         return reply.code(201).send({ os: criada });
     });
     /** Atividades atribuídas ao usuário logado, agrupáveis por status no front. */
-    app.get('/os/minhas', {
+    app.get('/atividades/minhas', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'As O.S. em que voce e o responsavel',
@@ -261,9 +261,9 @@ export async function rotasOs(app) {
     }, async (req) => {
         const { tenantId, usuarioId } = contexto(req);
         const [lista, politicas, cats] = await Promise.all([
-            db.query.ordensServico.findMany({
-                where: and(eq(ordensServico.tenantId, tenantId), eq(ordensServico.responsavelId, usuarioId)),
-                orderBy: [asc(ordensServico.status), asc(ordensServico.ordem), desc(ordensServico.criadoEm)],
+            db.query.atividades.findMany({
+                where: and(eq(atividades.tenantId, tenantId), eq(atividades.responsavelId, usuarioId)),
+                orderBy: [asc(atividades.status), asc(atividades.ordem), desc(atividades.criadoEm)],
             }),
             db.query.politicasSla.findMany({ where: eq(politicasSla.tenantId, tenantId) }),
             db.query.categorias.findMany({ where: eq(categorias.tenantId, tenantId) }),
@@ -271,7 +271,7 @@ export async function rotasOs(app) {
         return { ordens: lista.map((os) => ({ ...os, sla: calcularSla(os, politicas, cats, new Date()) })) };
     });
     /** Detalhe completo: filhos + SLA + links de aprovacao. */
-    app.get('/os/:id', {
+    app.get('/atividades/:id', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'Detalhe completo: filhos, SLA e links de aprovacao',
@@ -324,7 +324,7 @@ export async function rotasOs(app) {
             links,
         };
     });
-    app.patch('/os/:id', {
+    app.patch('/atividades/:id', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'Edita a O.S.',
@@ -343,9 +343,9 @@ export async function rotasOs(app) {
             await validarResponsavel(antes.projetoId, dados.responsavelId, req);
         }
         const [atualizada] = await db
-            .update(ordensServico)
+            .update(atividades)
             .set({ ...dados, atualizadoEm: new Date() })
-            .where(and(eq(ordensServico.id, id), eq(ordensServico.tenantId, tenantId)))
+            .where(and(eq(atividades.id, id), eq(atividades.tenantId, tenantId)))
             .returning();
         if (!atualizada)
             throw naoEncontrado('O.S.');
@@ -367,7 +367,7 @@ export async function rotasOs(app) {
         return { os: atualizada };
     });
     /** Movimento do Kanban. Sempre manual — a aprovacao nao move o card sozinha. */
-    app.patch('/os/:id/status', {
+    app.patch('/atividades/:id/status', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'Move o card no Kanban',
@@ -392,9 +392,9 @@ export async function rotasOs(app) {
         if (ordem !== undefined)
             mudanca.ordem = ordem;
         const [atualizada] = await db
-            .update(ordensServico)
+            .update(atividades)
             .set(mudanca)
-            .where(and(eq(ordensServico.id, id), eq(ordensServico.tenantId, tenantId)))
+            .where(and(eq(atividades.id, id), eq(atividades.tenantId, tenantId)))
             .returning();
         if (!atualizada)
             throw naoEncontrado('O.S.');
@@ -415,7 +415,7 @@ export async function rotasOs(app) {
         }
         return { os: atualizada };
     });
-    app.delete('/os/:id', {
+    app.delete('/atividades/:id', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'Apaga a O.S.',
@@ -431,15 +431,15 @@ export async function rotasOs(app) {
         // acumula anexo de O.S. que nao existe mais, para sempre
         await apagarArquivosDasOs([id]);
         const [removida] = await db
-            .delete(ordensServico)
-            .where(and(eq(ordensServico.id, id), eq(ordensServico.tenantId, req.user.tenantId)))
-            .returning({ id: ordensServico.id });
+            .delete(atividades)
+            .where(and(eq(atividades.id, id), eq(atividades.tenantId, req.user.tenantId)))
+            .returning({ id: atividades.id });
         if (!removida)
             throw naoEncontrado('O.S.');
         return reply.code(204).send();
     });
     /* ---------------------------- comentarios ---------------------------- */
-    app.post('/os/:id/comentarios', {
+    app.post('/atividades/:id/comentarios', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'Comenta na O.S.',
@@ -462,9 +462,9 @@ export async function rotasOs(app) {
         // o primeiro comentario publico marca a primeira resposta do SLA
         if (!interno && !os.primeiraRespostaEm) {
             await db
-                .update(ordensServico)
+                .update(atividades)
                 .set({ primeiraRespostaEm: new Date() })
-                .where(eq(ordensServico.id, id));
+                .where(eq(atividades.id, id));
         }
         // comentario interno nao sai do time: nao vira notificacao
         if (!interno) {
@@ -484,7 +484,7 @@ export async function rotasOs(app) {
     });
     /* ------------------------------ anexos ------------------------------- */
     /** Upload multipart. O arquivo vai para o bucket (ou disco) e so a linha fica no banco. */
-    app.post('/os/:id/anexos', {
+    app.post('/atividades/:id/anexos', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'Envia um anexo (multipart)',
@@ -628,7 +628,7 @@ export async function rotasOs(app) {
             anexar: download === '1',
         });
     });
-    app.delete('/os/:id/anexos/:anexoId', {
+    app.delete('/atividades/:id/anexos/:anexoId', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'Remove um anexo',
@@ -654,7 +654,7 @@ export async function rotasOs(app) {
         return reply.code(204).send();
     });
     /* ----------------------------- checklist ----------------------------- */
-    app.post('/os/:id/checklist', {
+    app.post('/atividades/:id/checklist', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'Acrescenta um item ao checklist',
@@ -669,7 +669,7 @@ export async function rotasOs(app) {
         const [criado] = await db.insert(checklistItens).values({ osId: id, texto, ordem }).returning();
         return reply.code(201).send({ item: criado });
     });
-    app.patch('/os/:id/checklist/:itemId', {
+    app.patch('/atividades/:id/checklist/:itemId', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'Edita o texto ou marca o item como feito',
@@ -691,7 +691,7 @@ export async function rotasOs(app) {
             throw naoEncontrado('Item');
         return { item: atualizado };
     });
-    app.put('/os/:id/checklist/ordem', {
+    app.put('/atividades/:id/checklist/ordem', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'Reordena todo o checklist',
@@ -730,7 +730,7 @@ export async function rotasOs(app) {
         });
         return { itens };
     });
-    app.delete('/os/:id/checklist/:itemId', {
+    app.delete('/atividades/:id/checklist/:itemId', {
         schema: doc({
             tag: 'Ordens de servico',
             resumo: 'Remove um item do checklist',

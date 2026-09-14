@@ -120,9 +120,19 @@ export const projetos = pgTable('projetos', {
     atualizadoEm: timestamp('atualizado_em', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index('projetos_tenant_idx').on(t.tenantId)]);
 /* ------------------------------------------------------------------ *
- * Ordens de servico
+ * Atividades  (a "ordem de servico" de antes)
+ *
+ * A unidade de trabalho: titulo, prioridade, nivel, responsavel, coluna do
+ * kanban e os relogios de SLA. Nada disso e atributo de fatura — por isso ela
+ * deixou de se chamar O.S. O nome "ordem de servico" passa a designar o
+ * agrupador mensal que soma estas atividades, e que ainda nao existe.
+ *
+ * As colunas `os_id` das tabelas filhas continuam com o nome antigo de
+ * proposito: elas vivem em tabelas que nao foram renomeadas, onde nenhuma view
+ * de compatibilidade alcanca. Viram `atividade_id` quando nao houver mais
+ * codigo antigo rodando.
  * ------------------------------------------------------------------ */
-export const ordensServico = pgTable('ordens_servico', {
+export const atividades = pgTable('atividades', {
     id: uuid('id').primaryKey().defaultRandom(),
     tenantId: uuid('tenant_id')
         .notNull()
@@ -167,7 +177,7 @@ export const checklistItens = pgTable('checklist_itens', {
     id: uuid('id').primaryKey().defaultRandom(),
     osId: uuid('os_id')
         .notNull()
-        .references(() => ordensServico.id, { onDelete: 'cascade' }),
+        .references(() => atividades.id, { onDelete: 'cascade' }),
     texto: text('texto').notNull(),
     feito: boolean('feito').notNull().default(false),
     ordem: integer('ordem').notNull().default(0),
@@ -176,7 +186,7 @@ export const anexos = pgTable('anexos', {
     id: uuid('id').primaryKey().defaultRandom(),
     osId: uuid('os_id')
         .notNull()
-        .references(() => ordensServico.id, { onDelete: 'cascade' }),
+        .references(() => atividades.id, { onDelete: 'cascade' }),
     // redundante com a O.S., mas evita join em toda checagem de posse no download
     tenantId: uuid('tenant_id')
         .notNull()
@@ -202,7 +212,7 @@ export const comentarios = pgTable('comentarios', {
     id: uuid('id').primaryKey().defaultRandom(),
     osId: uuid('os_id')
         .notNull()
-        .references(() => ordensServico.id, { onDelete: 'cascade' }),
+        .references(() => atividades.id, { onDelete: 'cascade' }),
     autorId: uuid('autor_id').references(() => usuarios.id, { onDelete: 'set null' }),
     autorNome: text('autor_nome').notNull(),
     texto: text('texto').notNull(),
@@ -214,7 +224,7 @@ export const historico = pgTable('historico', {
     id: uuid('id').primaryKey().defaultRandom(),
     osId: uuid('os_id')
         .notNull()
-        .references(() => ordensServico.id, { onDelete: 'cascade' }),
+        .references(() => atividades.id, { onDelete: 'cascade' }),
     tipo: text('tipo').notNull(),
     descricao: text('descricao').notNull(),
     autorNome: text('autor_nome').notNull(),
@@ -230,7 +240,7 @@ export const linksAprovacao = pgTable('links_aprovacao', {
         .references(() => tenants.id, { onDelete: 'cascade' }),
     osId: uuid('os_id')
         .notNull()
-        .references(() => ordensServico.id, { onDelete: 'cascade' }),
+        .references(() => atividades.id, { onDelete: 'cascade' }),
     token: text('token').notNull(),
     estado: estadoLinkEnum('estado').notNull().default('pendente'),
     // o que o aprovador enxerga
@@ -366,7 +376,7 @@ export const notificacoes = pgTable('notificacoes', {
     titulo: text('titulo').notNull(),
     descricao: text('descricao'),
     /** para onde a notificacao leva; nulo em evento sem O.S. */
-    osId: uuid('os_id').references(() => ordensServico.id, { onDelete: 'cascade' }),
+    osId: uuid('os_id').references(() => atividades.id, { onDelete: 'cascade' }),
     projetoId: uuid('projeto_id').references(() => projetos.id, { onDelete: 'cascade' }),
     /** quem causou — para nao notificar a si mesmo e para mostrar o avatar */
     autorId: uuid('autor_id').references(() => usuarios.id, { onDelete: 'set null' }),
@@ -401,7 +411,7 @@ export const grupoMembrosRelations = relations(grupoMembros, ({ one }) => ({
 export const notificacoesRelations = relations(notificacoes, ({ one }) => ({
     usuario: one(usuarios, { fields: [notificacoes.usuarioId], references: [usuarios.id] }),
     autor: one(usuarios, { fields: [notificacoes.autorId], references: [usuarios.id] }),
-    os: one(ordensServico, { fields: [notificacoes.osId], references: [ordensServico.id] }),
+    os: one(atividades, { fields: [notificacoes.osId], references: [atividades.id] }),
 }));
 export const projetoMembrosRelations = relations(projetoMembros, ({ one }) => ({
     projeto: one(projetos, { fields: [projetoMembros.projetoId], references: [projetos.id] }),
@@ -419,13 +429,13 @@ export const conviteProjetosRelations = relations(conviteProjetos, ({ one }) => 
 export const projetosRelations = relations(projetos, ({ one, many }) => ({
     tenant: one(tenants, { fields: [projetos.tenantId], references: [tenants.id] }),
     responsavel: one(usuarios, { fields: [projetos.responsavelId], references: [usuarios.id] }),
-    ordens: many(ordensServico),
+    ordens: many(atividades),
     membros: many(projetoMembros),
 }));
-export const ordensServicoRelations = relations(ordensServico, ({ one, many }) => ({
-    projeto: one(projetos, { fields: [ordensServico.projetoId], references: [projetos.id] }),
-    categoria: one(categorias, { fields: [ordensServico.categoriaId], references: [categorias.id] }),
-    responsavel: one(usuarios, { fields: [ordensServico.responsavelId], references: [usuarios.id] }),
+export const atividadesRelations = relations(atividades, ({ one, many }) => ({
+    projeto: one(projetos, { fields: [atividades.projetoId], references: [projetos.id] }),
+    categoria: one(categorias, { fields: [atividades.categoriaId], references: [categorias.id] }),
+    responsavel: one(usuarios, { fields: [atividades.responsavelId], references: [usuarios.id] }),
     checklist: many(checklistItens),
     anexos: many(anexos),
     comentarios: many(comentarios),
@@ -433,19 +443,19 @@ export const ordensServicoRelations = relations(ordensServico, ({ one, many }) =
     links: many(linksAprovacao),
 }));
 export const checklistRelations = relations(checklistItens, ({ one }) => ({
-    os: one(ordensServico, { fields: [checklistItens.osId], references: [ordensServico.id] }),
+    os: one(atividades, { fields: [checklistItens.osId], references: [atividades.id] }),
 }));
 export const anexosRelations = relations(anexos, ({ one }) => ({
-    os: one(ordensServico, { fields: [anexos.osId], references: [ordensServico.id] }),
+    os: one(atividades, { fields: [anexos.osId], references: [atividades.id] }),
 }));
 export const comentariosRelations = relations(comentarios, ({ one }) => ({
-    os: one(ordensServico, { fields: [comentarios.osId], references: [ordensServico.id] }),
+    os: one(atividades, { fields: [comentarios.osId], references: [atividades.id] }),
 }));
 export const historicoRelations = relations(historico, ({ one }) => ({
-    os: one(ordensServico, { fields: [historico.osId], references: [ordensServico.id] }),
+    os: one(atividades, { fields: [historico.osId], references: [atividades.id] }),
 }));
 export const linksAprovacaoRelations = relations(linksAprovacao, ({ one }) => ({
-    os: one(ordensServico, { fields: [linksAprovacao.osId], references: [ordensServico.id] }),
+    os: one(atividades, { fields: [linksAprovacao.osId], references: [atividades.id] }),
     tenant: one(tenants, { fields: [linksAprovacao.tenantId], references: [tenants.id] }),
 }));
 //# sourceMappingURL=schema.js.map
