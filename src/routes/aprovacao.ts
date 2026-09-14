@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { db } from '../db/client.js'
-import { historico, linksAprovacao, ordensServico } from '../db/schema.js'
+import { historico, linksAprovacao, atividades } from '../db/schema.js'
 import { autenticar, contexto, projetosVisiveis } from '../lib/auth.js'
 import { doc } from '../lib/doc.js'
 import { linkSchema, uuidParam } from '../lib/esquemas.js'
@@ -32,8 +32,8 @@ export function montarUrlPublica(token: string): string {
 
 /** O.S. do tenant e, para colaborador, de projeto que ele participa. */
 async function osVisivel(id: string, req: FastifyRequest) {
-  const os = await db.query.ordensServico.findFirst({
-    where: and(eq(ordensServico.id, id), eq(ordensServico.tenantId, req.user.tenantId)),
+  const os = await db.query.atividades.findFirst({
+    where: and(eq(atividades.id, id), eq(atividades.tenantId, req.user.tenantId)),
   })
   if (!os) throw naoEncontrado('O.S.')
 
@@ -95,9 +95,9 @@ export async function rotasAprovacao(app: FastifyInstance): Promise<void> {
 
     if (dados.moverParaAprovacao && os.status !== 'em_aprovacao') {
       await db
-        .update(ordensServico)
+        .update(atividades)
         .set({ status: 'em_aprovacao', atualizadoEm: new Date() })
-        .where(eq(ordensServico.id, id))
+        .where(eq(atividades.id, id))
     }
 
     await db.insert(historico).values({

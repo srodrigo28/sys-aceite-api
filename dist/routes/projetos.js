@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { db } from '../db/client.js';
 import { categorias, ordensServico, politicasSla, projetoMembros, projetos, } from '../db/schema.js';
 import { autenticar, garantirAcessoProjeto, projetosVisiveis } from '../lib/auth.js';
+import { doc } from '../lib/doc.js';
+import { projetoSchema, slaSchema, uuidParam } from '../lib/esquemas.js';
 import { apagarArquivosDasOs } from './os.js';
 import { calcularSla } from '../lib/sla.js';
 import { invalido, naoEncontrado, validar } from '../lib/http.js';
@@ -19,13 +21,45 @@ const criarSchema = z.object({
 const atualizarSchema = criarSchema.partial().extend({
     arquivado: z.boolean().optional(),
 });
+const projetoComContagemSchema = projetoSchema.extend({
+    contagem: z
+        .record(z.string(), z.number().int())
+        .describe('O.S. por status, ex.: { "a_fazer": 3, "atendendo": 1 }. Status sem O.S. fica de fora'),
+});
+const dashboardSchema = z.object({
+    kpis: z.object({
+        abertas: z.number().int(),
+        emRisco: z.number().int(),
+        estouradas: z.number().int(),
+        aguardandoAprovacao: z.number().int(),
+    }),
+    precisaAtencao: z
+        .array(z.object({
+        id: z.string().uuid(),
+        codigo: z.string(),
+        titulo: z.string(),
+        projetoId: z.string().uuid(),
+        prioridade: z.enum(['critica', 'alta', 'media', 'baixa']),
+        status: z.enum(['a_fazer', 'atendendo', 'pausado', 'em_aprovacao', 'finalizado']),
+        sla: slaSchema,
+    }))
+        .describe('As 5 O.S. abertas com maior consumo do prazo de resolucao'),
+});
 export async function rotasProjetos(app) {
     app.addHook('preHandler', autenticar);
     /**
      * Projetos que o usuario enxerga, com a contagem de O.S. por status.
      * Admin ve todos os do tenant; colaborador so os que participa.
      */
-    app.get('/projetos', async (req) => {
+    app.get('/projetos', {
+        schema: doc({
+            tag: 'Projetos',
+            resumo: 'Projetos visiveis, com a contagem de O.S. por status',
+            descricao: 'Admin ve todos os do tenant; membro so aqueles em que consta como participante. ' +
+                'Nao e paginado: a lista e por workspace e cabe numa tela.',
+            ok: { schema: z.object({ projetos: z.array(projetoComContagemSchema) }) },
+        }),
+    }, async (req) => {
         const { tenantId } = req.user;
         const visiveis = await projetosVisiveis(req);
         // colaborador sem projeto nenhum: lista vazia, sem ir ao banco de novo
@@ -59,7 +93,16 @@ export async function rotasProjetos(app) {
             })),
         };
     });
-    app.post('/projetos', async (req, reply) => {
+    app.post('/projetos', {
+        schema: doc({
+            tag: 'Projetos',
+            resumo: 'Cria um projeto',
+            descricao: 'Quem cria entra como membro automaticamente — caso contrario um membro criaria ' +
+                'um projeto invisivel para ele mesmo. O responsavel indicado tambem entra.',
+            body: criarSchema,
+            ok: { status: 201, schema: z.object({ projeto: projetoSchema }), descricao: 'Projeto criado' },
+        }),
+    }, async (req, reply) => {
         const dados = validar(criarSchema, req.body);
         const criado = await db.transaction(async (tx) => {
             const [projeto] = await tx
@@ -81,8 +124,17 @@ export async function rotasProjetos(app) {
         });
         return reply.code(201).send({ projeto: criado });
     });
-    app.get('/projetos/:id', async (req) => {
-        const { id } = validar(z.object({ id: z.string().uuid() }), req.params);
+    app.get('/projetos/:id', {
+        schema: doc({
+            tag: 'Projetos',
+            resumo: 'Detalhe do projeto',
+            descricao: 'Projeto de outro tenant, ou do seu tenant mas fora dos seus projetos, responde 404 — ' +
+                'nao 403. Um 403 confirmaria que o id existe.',
+            params: uuidParam,
+            ok: { schema: z.object({ projeto: projetoSchema }) },
+        }),
+    }, async (req) => {
+        const { id } = validar(uuidParam, req.params);
         await garantirAcessoProjeto(req, id);
         const projeto = await db.query.projetos.findFirst({
             where: and(eq(projetos.id, id), eq(projetos.tenantId, req.user.tenantId)),
@@ -91,8 +143,17 @@ export async function rotasProjetos(app) {
             throw naoEncontrado('Projeto');
         return { projeto };
     });
-    app.patch('/projetos/:id', async (req) => {
-        const { id } = validar(z.object({ id: z.string().uuid() }), req.params);
+    app.patch('/projetos/:id', {
+        schema: doc({
+            tag: 'Projetos',
+            resumo: 'Edita o projeto',
+            descricao: 'Todos os campos sao opcionais. `arquivado: true` tira o projeto do uso corrente.',
+            params: uuidParam,
+            body: atualizarSchema,
+            ok: { schema: z.object({ projeto: projetoSchema }) },
+        }),
+    }, async (req) => {
+        const { id } = validar(uuidParam, req.params);
         const dados = validar(atualizarSchema, req.body);
         await garantirAcessoProjeto(req, id);
         const [atualizado] = await db
@@ -104,8 +165,18 @@ export async function rotasProjetos(app) {
             throw naoEncontrado('Projeto');
         return { projeto: atualizado };
     });
-    app.delete('/projetos/:id', async (req, reply) => {
-        const { id } = validar(z.object({ id: z.string().uuid() }), req.params);
+    app.delete('/projetos/:id', {
+        schema: doc({
+            tag: 'Projetos',
+            resumo: 'Apaga o projeto e tudo que pende dele',
+            descricao: 'O cascade do banco leva O.S., comentarios e anexos. Os **arquivos** no bucket sao ' +
+                'apagados aqui, no codigo: o banco nao alcanca o storage, e sem esta passagem eles ' +
+                'ficariam orfaos para sempre. Nao ha desfazer.',
+            params: uuidParam,
+            ok: { status: 204, schema: null, descricao: 'Projeto apagado. Sem corpo.' },
+        }),
+    }, async (req, reply) => {
+        const { id } = validar(uuidParam, req.params);
         await garantirAcessoProjeto(req, id);
         // cascade: projeto -> O.S. -> anexos. As linhas o banco leva; os arquivos
         // no bucket ficariam orfaos para sempre se ninguem apagasse aqui.
@@ -123,7 +194,16 @@ export async function rotasProjetos(app) {
         return reply.code(204).send();
     });
     /** KPIs do dashboard, sobre as O.S. abertas dos projetos que o usuario ve. */
-    app.get('/dashboard', async (req) => {
+    app.get('/dashboard', {
+        schema: doc({
+            tag: 'Projetos',
+            resumo: 'KPIs e as O.S. mais proximas de estourar',
+            descricao: 'Conta apenas O.S. abertas (status diferente de `finalizado`) dos projetos visiveis. ' +
+                'O SLA e calculado na hora da leitura, nunca gravado: politica ou multiplicador de ' +
+                'categoria editado hoje ja vale para card aberto ontem.',
+            ok: { schema: dashboardSchema },
+        }),
+    }, async (req) => {
         const { tenantId } = req.user;
         const visiveis = await projetosVisiveis(req);
         if (visiveis !== 'todos' && visiveis.length === 0) {

@@ -9,12 +9,12 @@ import {
   comentarios,
   historico,
   linksAprovacao,
-  ordensServico,
+  atividades,
   politicasSla,
   projetos,
   projetoMembros,
   usuarios,
-  type OrdemServico,
+  type Atividade,
   type StatusOS,
 } from '../db/schema.js'
 import { anexoTamanhoMax } from '../env.js'
@@ -114,11 +114,11 @@ const arquivoQuery = z.object({
  * ------------------------------------------------------------------ */
 
 function aplicarTransicao(
-  os: OrdemServico,
+  os: Atividade,
   novo: StatusOS,
   agora: Date,
-): Partial<typeof ordensServico.$inferInsert> {
-  const mudanca: Partial<typeof ordensServico.$inferInsert> = {
+): Partial<typeof atividades.$inferInsert> {
+  const mudanca: Partial<typeof atividades.$inferInsert> = {
     status: novo,
     atualizadoEm: agora,
   }
@@ -154,8 +154,8 @@ async function gerarCodigo(tenantId: string): Promise<string> {
   const prefixo = `OS-${ano}-`
   const [linha] = await db
     .select({ total: sql<number>`count(*)::int` })
-    .from(ordensServico)
-    .where(and(eq(ordensServico.tenantId, tenantId), like(ordensServico.codigo, `${prefixo}%`)))
+    .from(atividades)
+    .where(and(eq(atividades.tenantId, tenantId), like(atividades.codigo, `${prefixo}%`)))
   return `${prefixo}${String((linha?.total ?? 0) + 1).padStart(4, '0')}`
 }
 
@@ -187,9 +187,9 @@ export async function apagarArquivosDasOs(osIds: string[]): Promise<number> {
   return apagados
 }
 
-async function buscarOsVisivel(id: string, req: FastifyRequest): Promise<OrdemServico> {
-  const os = await db.query.ordensServico.findFirst({
-    where: and(eq(ordensServico.id, id), eq(ordensServico.tenantId, req.user.tenantId)),
+async function buscarOsVisivel(id: string, req: FastifyRequest): Promise<Atividade> {
+  const os = await db.query.atividades.findFirst({
+    where: and(eq(atividades.id, id), eq(atividades.tenantId, req.user.tenantId)),
   })
   if (!os) throw naoEncontrado('O.S.')
 
@@ -245,9 +245,9 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     if (!projeto) throw naoEncontrado('Projeto')
 
     const [lista, politicas, cats] = await Promise.all([
-      db.query.ordensServico.findMany({
-        where: and(eq(ordensServico.projetoId, projetoId), eq(ordensServico.tenantId, tenantId)),
-        orderBy: [asc(ordensServico.ordem), desc(ordensServico.criadoEm)],
+      db.query.atividades.findMany({
+        where: and(eq(atividades.projetoId, projetoId), eq(atividades.tenantId, tenantId)),
+        orderBy: [asc(atividades.ordem), desc(atividades.criadoEm)],
       }),
       db.query.politicasSla.findMany({ where: eq(politicasSla.tenantId, tenantId) }),
       db.query.categorias.findMany({ where: eq(categorias.tenantId, tenantId) }),
@@ -287,7 +287,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
 
     const agora = new Date()
     const [criada] = await db
-      .insert(ordensServico)
+      .insert(atividades)
       .values({
         ...dados,
         tenantId,
@@ -333,9 +333,9 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
   }, async (req) => {
     const { tenantId, usuarioId } = contexto(req)
     const [lista, politicas, cats] = await Promise.all([
-      db.query.ordensServico.findMany({
-        where: and(eq(ordensServico.tenantId, tenantId), eq(ordensServico.responsavelId, usuarioId)),
-        orderBy: [asc(ordensServico.status), asc(ordensServico.ordem), desc(ordensServico.criadoEm)],
+      db.query.atividades.findMany({
+        where: and(eq(atividades.tenantId, tenantId), eq(atividades.responsavelId, usuarioId)),
+        orderBy: [asc(atividades.status), asc(atividades.ordem), desc(atividades.criadoEm)],
       }),
       db.query.politicasSla.findMany({ where: eq(politicasSla.tenantId, tenantId) }),
       db.query.categorias.findMany({ where: eq(categorias.tenantId, tenantId) }),
@@ -422,9 +422,9 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     }
 
     const [atualizada] = await db
-      .update(ordensServico)
+      .update(atividades)
       .set({ ...dados, atualizadoEm: new Date() })
-      .where(and(eq(ordensServico.id, id), eq(ordensServico.tenantId, tenantId)))
+      .where(and(eq(atividades.id, id), eq(atividades.tenantId, tenantId)))
       .returning()
     if (!atualizada) throw naoEncontrado('O.S.')
 
@@ -478,9 +478,9 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     if (ordem !== undefined) mudanca.ordem = ordem
 
     const [atualizada] = await db
-      .update(ordensServico)
+      .update(atividades)
       .set(mudanca)
-      .where(and(eq(ordensServico.id, id), eq(ordensServico.tenantId, tenantId)))
+      .where(and(eq(atividades.id, id), eq(atividades.tenantId, tenantId)))
       .returning()
     if (!atualizada) throw naoEncontrado('O.S.')
 
@@ -522,9 +522,9 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     await apagarArquivosDasOs([id])
 
     const [removida] = await db
-      .delete(ordensServico)
-      .where(and(eq(ordensServico.id, id), eq(ordensServico.tenantId, req.user.tenantId)))
-      .returning({ id: ordensServico.id })
+      .delete(atividades)
+      .where(and(eq(atividades.id, id), eq(atividades.tenantId, req.user.tenantId)))
+      .returning({ id: atividades.id })
     if (!removida) throw naoEncontrado('O.S.')
     return reply.code(204).send()
   })
@@ -560,9 +560,9 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     // o primeiro comentario publico marca a primeira resposta do SLA
     if (!interno && !os.primeiraRespostaEm) {
       await db
-        .update(ordensServico)
+        .update(atividades)
         .set({ primeiraRespostaEm: new Date() })
-        .where(eq(ordensServico.id, id))
+        .where(eq(atividades.id, id))
     }
 
     // comentario interno nao sai do time: nao vira notificacao

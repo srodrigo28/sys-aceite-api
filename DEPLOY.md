@@ -24,8 +24,10 @@ no ambiente do container. Nunca adicione `COPY .env` ao Dockerfile.
 ## Verificação antes de iniciar
 
 ```bash
-docker run --rm sysaceite-api:latest npm run env:check:dist
+docker run --rm --env-file .env.deploy sysaceite-api:latest npm run env:check:dist
 ```
 
 Se aparecer `nenhum arquivo .env encontrado`, confira o `--env-file`, `ENV_FILE` e as permissões
-do arquivo externo. O script `deploy-vps.sh` continua disponível para o modelo com `--env-file`.
+do arquivo externo. A checagem precisa receber o mesmo ambiente que será usado pelo container;
+rodá-la sem `--env-file` só é correto quando todas as variáveis já foram injetadas no processo.
+O script `deploy-vps.sh` continua disponível para o modelo com `--env-file`.

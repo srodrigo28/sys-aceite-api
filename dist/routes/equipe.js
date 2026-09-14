@@ -9,6 +9,8 @@ import { validarArquivo } from '../lib/anexo.js';
 import { apagar, baixar, enviar } from '../lib/bucket.js';
 import { emailDeConvite, enviarEmail } from '../lib/email.js';
 import { podeGerarMiniatura, prepararAvatar } from '../lib/imagem.js';
+import { doc } from '../lib/doc.js';
+import { conviteSchema, usuarioSchema } from '../lib/esquemas.js';
 import { conflito, invalido, naoEncontrado, validar } from '../lib/http.js';
 const VALIDADES = { '7d': 7, '14d': 14, '30d': 30 };
 const idParam = z.object({ id: z.string().uuid() });
@@ -27,6 +29,29 @@ const atualizarUsuarioSchema = z.object({
     papel: z.enum(['admin', 'membro']).optional(),
     ativo: z.boolean().optional(),
     projetoIds: z.array(z.string().uuid()).optional(),
+});
+const projetoResumoSchema = z.object({ id: z.string().uuid(), nome: z.string() });
+/**
+ * A equipe tem duas faces. Admin recebe o usuario inteiro; membro recebe uma
+ * versao sem e-mail e sem `tenantId` — a tela mostra foto, papel e desde
+ * quando a pessoa esta, e nada disso precisa do e-mail de ninguem.
+ */
+const membroSchema = usuarioSchema
+    .partial({ tenantId: true, email: true, avatarAtualizadoEm: true })
+    .extend({ projetos: z.array(projetoResumoSchema) });
+const conviteComProjetosSchema = conviteSchema
+    .omit({ tenantId: true })
+    .partial({ convidadoPorId: true, usuarioId: true, aceitoEm: true, emailEnviadoEm: true })
+    .extend({ projetos: z.array(projetoResumoSchema).optional() });
+/** O que volta ao gerar ou reenviar um convite. */
+const envioConviteSchema = z.object({
+    convite: conviteComProjetosSchema,
+    url: z.string().describe('Link de aceite, para copiar quando o e-mail nao sai'),
+    emailEnviado: z.boolean(),
+    motivoEnvio: z
+        .string()
+        .nullable()
+        .describe('Por que o e-mail nao foi enviado — o admin precisa saber para copiar o link'),
 });
 export function montarUrlConvite(token) {
     return `${env.APP_PUBLIC_URL.replace(/\/$/, '')}/convite/${token}`;
@@ -67,7 +92,22 @@ export async function rotasEquipe(app) {
      * reduzida (sem e-mail e sem convite) — ele precisa dela para os avatares e
      * o seletor de responsavel, nao para administrar ninguem.
      */
-    app.get('/equipe', async (req) => {
+    app.get('/equipe', {
+        schema: doc({
+            tag: 'Equipe',
+            resumo: 'Pessoas do workspace e, para admin, os convites',
+            descricao: 'A resposta muda conforme quem pergunta: **admin** recebe o usuario completo mais a ' +
+                'lista de convites; **membro** recebe uma versao sem e-mail nem `tenantId`, e ' +
+                '`convites` vazio. O corte e feito no servidor — nao e o front que esconde. ' +
+                'Inclui desativados, porque eles continuam aparecendo no historico e como responsaveis.',
+            ok: {
+                schema: z.object({
+                    membros: z.array(membroSchema),
+                    convites: z.array(conviteComProjetosSchema),
+                }),
+            },
+        }),
+    }, async (req) => {
         const { tenantId } = req.user;
         const eu = await usuarioAtual(req);
         const ehAdmin = eu.papel === 'admin';
@@ -112,10 +152,34 @@ export async function rotasEquipe(app) {
     /* ------------------------------------------------------------------ *
      * Convites
      * ------------------------------------------------------------------ */
-    app.get('/convites', { preHandler: somenteAdmin }, async (req) => {
+    app.get('/convites', {
+        preHandler: somenteAdmin,
+        schema: doc({
+            tag: 'Equipe',
+            resumo: 'Convites do workspace, do mais novo ao mais antigo (admin)',
+            descricao: 'O `estado` ja vem com a expiracao aplicada: convite vencido aparece como `expirado` ' +
+                'mesmo que a linha no banco ainda diga `pendente`.',
+            ok: { schema: z.object({ convites: z.array(conviteComProjetosSchema) }) },
+            erros: [403],
+        }),
+    }, async (req) => {
         return { convites: await listarConvites(req.user.tenantId) };
     });
-    app.post('/convites', { preHandler: somenteAdmin }, async (req, reply) => {
+    app.post('/convites', {
+        preHandler: somenteAdmin,
+        schema: doc({
+            tag: 'Equipe',
+            resumo: 'Convida alguem para o workspace (admin)',
+            descricao: 'Nao cria usuario: a conta so nasce no aceite. O e-mail e unico em toda a base, entao ' +
+                'endereco ja usado em outro workspace tambem bloqueia. ' +
+                '**Falha de e-mail nao desfaz o convite** — ele fica gravado e a resposta traz ' +
+                '`emailEnviado: false` com o `motivoEnvio`, para o admin copiar a `url` e mandar por ' +
+                'onde quiser. Com SMTP desligado esse e o fluxo normal, nao uma excecao.',
+            body: convidarSchema,
+            ok: { status: 201, schema: envioConviteSchema, descricao: 'Convite gravado' },
+            erros: [403, 409],
+        }),
+    }, async (req, reply) => {
         const dados = validar(convidarSchema, req.body);
         const { tenantId } = req.user;
         const eu = await usuarioAtual(req);
@@ -173,7 +237,20 @@ export async function rotasEquipe(app) {
             motivoEnvio: envio.motivo ?? null,
         });
     });
-    app.post('/convites/:id/reenviar', { preHandler: somenteAdmin }, async (req) => {
+    app.post('/convites/:id/reenviar', {
+        preHandler: somenteAdmin,
+        schema: doc({
+            tag: 'Equipe',
+            resumo: 'Reenvia o convite com um token novo (admin)',
+            descricao: 'O token antigo **morre**: e-mail encaminhado circula, e um convite reenviado precisa ' +
+                'invalidar o link que ja saiu. Renova a validade para 7 dias e volta a `pendente`, o que ' +
+                'tambem serve para ressuscitar convite expirado. Convite aceito ou revogado da 400.',
+            params: idParam,
+            semCorpo: true,
+            ok: { schema: envioConviteSchema },
+            erros: [403],
+        }),
+    }, async (req) => {
         const { id } = validar(idParam, req.params);
         const { tenantId } = req.user;
         const eu = await usuarioAtual(req);
@@ -207,7 +284,18 @@ export async function rotasEquipe(app) {
             motivoEnvio: envio.motivo ?? null,
         };
     });
-    app.post('/convites/:id/revogar', { preHandler: somenteAdmin }, async (req) => {
+    app.post('/convites/:id/revogar', {
+        preHandler: somenteAdmin,
+        schema: doc({
+            tag: 'Equipe',
+            resumo: 'Cancela um convite pendente (admin)',
+            descricao: 'O link para de funcionar na hora. Convite ja aceito nao se revoga: da 400.',
+            params: idParam,
+            semCorpo: true,
+            ok: { schema: z.object({ convite: conviteComProjetosSchema }) },
+            erros: [403],
+        }),
+    }, async (req) => {
         const { id } = validar(idParam, req.params);
         const convite = await db.query.convites.findFirst({
             where: and(eq(convites.id, id), eq(convites.tenantId, req.user.tenantId)),
@@ -228,7 +316,21 @@ export async function rotasEquipe(app) {
     /* ------------------------------------------------------------------ *
      * Perfil de outra pessoa (admin)
      * ------------------------------------------------------------------ */
-    app.patch('/usuarios/:id', { preHandler: somenteAdmin }, async (req) => {
+    app.patch('/usuarios/:id', {
+        preHandler: somenteAdmin,
+        schema: doc({
+            tag: 'Equipe',
+            resumo: 'Edita papel, acesso e projetos de uma pessoa (admin)',
+            descricao: '`ativo: false` tira o acesso na hora sem apagar nada — desativar em vez de excluir, ' +
+                'porque o historico e os cards continuam apontando para a pessoa. ' +
+                '**O workspace nunca fica sem dono:** rebaixar ou desativar o unico admin ativo da 400. ' +
+                '`projetoIds` substitui a lista inteira de participacoes, nao acrescenta.',
+            params: idParam,
+            body: atualizarUsuarioSchema,
+            ok: { schema: z.object({ usuario: usuarioSchema }) },
+            erros: [403],
+        }),
+    }, async (req) => {
         const { id } = validar(idParam, req.params);
         const dados = validar(atualizarUsuarioSchema, req.body);
         const { tenantId } = req.user;
@@ -271,7 +373,19 @@ export async function rotasEquipe(app) {
      * Foto de perfil
      * ------------------------------------------------------------------ */
     /** Envia a propria foto. Sempre vira webp quadrado de 256px. */
-    app.post('/auth/eu/avatar', async (req, reply) => {
+    app.post('/auth/eu/avatar', {
+        schema: doc({
+            tag: 'Equipe',
+            resumo: 'Envia a propria foto de perfil (multipart)',
+            descricao: 'Um arquivo no campo `arquivo`. A imagem e recortada e convertida para webp antes de ' +
+                'subir — o que chega ao storage tem poucos KB, independente do que foi enviado. ' +
+                'Substitui a foto anterior. Como nos anexos, o caminho no storage nunca sai na resposta: ' +
+                'vem `fotoUrl`, que aponta para o proxy.',
+            arquivo: { campo: 'arquivo', descricao: 'Imagem (JPEG, PNG ou WebP)' },
+            ok: { status: 201, schema: z.object({ usuario: usuarioSchema }) },
+            erros: [413],
+        }),
+    }, async (req, reply) => {
         const eu = await usuarioAtual(req);
         const parte = await req.file();
         if (!parte)
@@ -321,7 +435,14 @@ export async function rotasEquipe(app) {
             throw naoEncontrado('Usuario');
         return reply.code(201).send({ usuario: usuarioPublico(atualizado) });
     });
-    app.delete('/auth/eu/avatar', async (req, reply) => {
+    app.delete('/auth/eu/avatar', {
+        schema: doc({
+            tag: 'Equipe',
+            resumo: 'Remove a propria foto de perfil',
+            descricao: 'Tira o arquivo do storage e volta para as iniciais. Nao ter foto nao e erro.',
+            ok: { status: 204, schema: null, descricao: 'Foto removida. Sem corpo.' },
+        }),
+    }, async (req, reply) => {
         const eu = await usuarioAtual(req);
         if (eu.avatarFileId && eu.avatarCaminho) {
             await apagar({
@@ -340,7 +461,17 @@ export async function rotasEquipe(app) {
         return reply.code(204).send();
     });
     /** Proxy da foto: escopado no tenant, como o dos anexos. */
-    app.get('/usuarios/:id/avatar', async (req, reply) => {
+    app.get('/usuarios/:id/avatar', {
+        schema: doc({
+            tag: 'Equipe',
+            resumo: 'Foto de uma pessoa (proxy autenticado)',
+            descricao: 'Mesma regra dos anexos: o storage e publico, entao o endereco real nao sai da API e ' +
+                'todo acesso passa por aqui, escopado no tenant. Sempre webp, com cache privado curto ' +
+                'porque a foto muda. Pessoa sem foto responde 404.',
+            params: idParam,
+            binario: { descricao: 'A imagem em image/webp' },
+        }),
+    }, async (req, reply) => {
         const { id } = validar(idParam, req.params);
         const pessoa = await db.query.usuarios.findFirst({
             where: and(eq(usuarios.id, id), eq(usuarios.tenantId, req.user.tenantId)),
@@ -365,7 +496,24 @@ export async function rotasEquipe(app) {
     /* ------------------------------------------------------------------ *
      * Projetos visiveis para o seletor do dialog de convite
      * ------------------------------------------------------------------ */
-    app.get('/equipe/projetos', async (req) => {
+    app.get('/equipe/projetos', {
+        schema: doc({
+            tag: 'Equipe',
+            resumo: 'Projetos visiveis, so o necessario para um seletor',
+            descricao: 'Enxuta de proposito: alimenta o seletor do dialogo de convite. Para a lista completa, ' +
+                'com contagem de O.S., use `GET /projetos`.',
+            ok: {
+                schema: z.object({
+                    projetos: z.array(z.object({
+                        id: z.string().uuid(),
+                        nome: z.string(),
+                        cliente: z.string(),
+                        cor: z.string(),
+                    })),
+                }),
+            },
+        }),
+    }, async (req) => {
         const { tenantId } = req.user;
         const visiveis = await projetosVisiveis(req);
         if (visiveis !== 'todos' && visiveis.length === 0)

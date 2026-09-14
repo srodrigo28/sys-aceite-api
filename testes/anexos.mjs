@@ -121,11 +121,33 @@ function crc32(buf) {
 const saude = await (await fetch(`${API}/health`)).json()
 ok(`storage em uso: ${saude.storage}`)
 
-const token = await login('demo@sysaceite.dev', 'demo12345')
-const { projetos } = await jsonComToken(token, '/projetos')
-const quadro = await jsonComToken(token, `/projetos/${projetos[0].id}/os`)
-const os = quadro.ordens[0]
-const outraOs = quadro.ordens[1]
+// A suite nao usa o tenant demo: uploads anteriores nele podem atingir o
+// limite de 20 anexos e mascarar a validacao que queremos exercitar.
+const sufixo = Date.now().toString(36)
+const cadastro = await fetch(`${API}/auth/registrar`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    nome: 'Teste Anexos',
+    email: `anexos.${sufixo}@sysaceite.dev`,
+    senha: 'senha12345',
+    empresa: `Anexos Teste ${sufixo}`,
+  }),
+})
+if (!cadastro.ok) falhar(`cadastro de teste devolveu ${cadastro.status}: ${await cadastro.text()}`)
+const token = (await cadastro.json()).token
+const { projeto } = await jsonComToken(token, '/projetos', {
+  method: 'POST',
+  body: JSON.stringify({ nome: 'Projeto de anexos', cliente: 'Teste', cor: '#6366f1' }),
+})
+const { os } = await jsonComToken(token, '/os', {
+  method: 'POST',
+  body: JSON.stringify({ projetoId: projeto.id, titulo: 'O.S. principal de anexos' }),
+})
+const { os: outraOs } = await jsonComToken(token, '/os', {
+  method: 'POST',
+  body: JSON.stringify({ projetoId: projeto.id, titulo: 'Outra O.S. de anexos' }),
+})
 ok(`O.S. de teste: ${os.codigo}`)
 
 // 1. upload
@@ -224,7 +246,6 @@ if (semAuth.status !== 401) falhar(`sem token devia dar 401, veio ${semAuth.stat
 ok('sem token: 401')
 
 // 6. outro tenant -> 404
-const sufixo = Date.now().toString(36)
 const intruso = await fetch(`${API}/auth/registrar`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },

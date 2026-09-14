@@ -11,7 +11,7 @@ import {
   conviteProjetos,
   historico,
   linksAprovacao,
-  ordensServico,
+  atividades,
   politicasSla,
   projetoMembros,
   projetos,
@@ -178,7 +178,7 @@ export async function rotasPublicas(app: FastifyInstance): Promise<void> {
 
     const estado = estadoEfetivo(link)
 
-    const os = await db.query.ordensServico.findFirst({ where: eq(ordensServico.id, link.osId) })
+    const os = await db.query.atividades.findFirst({ where: eq(atividades.id, link.osId) })
     if (!os) throw naoEncontrado('O.S.')
 
     const [projeto, tenant, categoria] = await Promise.all([
@@ -365,7 +365,7 @@ export async function rotasPublicas(app: FastifyInstance): Promise<void> {
       if (!gravado) throw invalido('Este link ja recebeu um parecer.')
 
       await tx
-        .update(ordensServico)
+        .update(atividades)
         .set({
           aprovado,
           aprovadorNome: dados.aprovadorNome.trim(),
@@ -373,7 +373,7 @@ export async function rotasPublicas(app: FastifyInstance): Promise<void> {
           aprovadoEm: agora,
           atualizadoEm: agora,
         })
-        .where(eq(ordensServico.id, link.osId))
+        .where(eq(atividades.id, link.osId))
 
       if (observacao) {
         await tx.insert(comentarios).values({
@@ -398,8 +398,8 @@ export async function rotasPublicas(app: FastifyInstance): Promise<void> {
 
     // quem aprova nao e usuario do sistema: autorId fica null e o nome vai
     // como texto, para o sino mostrar quem decidiu
-    const osDoLink = await db.query.ordensServico.findFirst({
-      where: eq(ordensServico.id, link.osId),
+    const osDoLink = await db.query.atividades.findFirst({
+      where: eq(atividades.id, link.osId),
     })
     if (osDoLink) {
       await notificar({

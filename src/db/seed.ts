@@ -5,7 +5,7 @@ import {
   categorias,
   comentarios,
   historico,
-  ordensServico,
+  atividades,
   politicasSla,
   projetoMembros,
   projetos,
@@ -196,7 +196,7 @@ async function semear() {
     }
   })
 
-  const ordens = await db.insert(ordensServico).values(valores).returning()
+  const ordens = await db.insert(atividades).values(valores).returning()
   console.log(`  - ${ordens.length} ordens de servico`)
 
   // um pouco de conversa e historico nas primeiras O.S.

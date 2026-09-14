@@ -8,6 +8,8 @@ import { encolherParaLimite, gerarMiniatura, podeGerarMiniatura } from '../lib/i
 import { interessadosNaOs, notificar } from '../lib/notificacao.js';
 import { autenticar, contexto, garantirAcessoProjeto, projetosVisiveis, } from '../lib/auth.js';
 import { apagar, baixar, enviar } from '../lib/bucket.js';
+import { doc } from '../lib/doc.js';
+import { anexoSchema, categoriaSchema, checklistItemSchema, comentarioSchema, historicoSchema, linkSchema, osComSlaSchema, osSchema, projetoSchema, uuidParam, } from '../lib/esquemas.js';
 import { invalido, naoEncontrado, validar } from '../lib/http.js';
 import { calcularSla } from '../lib/sla.js';
 const idParam = z.object({ id: z.string().uuid() });
@@ -29,6 +31,34 @@ const criarSchema = z.object({
     solicitante: z.string().max(120).nullish(),
 });
 const atualizarSchema = criarSchema.partial().omit({ projetoId: true, status: true });
+const statusSchema = z.object({
+    status: z.enum(['a_fazer', 'atendendo', 'pausado', 'em_aprovacao', 'finalizado']),
+    ordem: z.number().int().min(0).optional().describe('Posicao na coluna de destino'),
+});
+const comentarioBodySchema = z.object({
+    texto: z.string().min(1, 'Escreva algo'),
+    interno: z.boolean().default(false).describe('true = nunca aparece na pagina publica'),
+});
+const itemBodySchema = z.object({
+    texto: z.string().min(1),
+    ordem: z.number().int().min(0).default(0),
+});
+const itemPatchSchema = z.object({
+    texto: z.string().min(1).optional(),
+    feito: z.boolean().optional(),
+});
+/** A lista completa evita estados intermediarios quando o usuario arrasta varias vezes. */
+const ordenarChecklistSchema = z.object({
+    itemIds: z.array(z.string().uuid()).min(1),
+}).refine((dados) => new Set(dados.itemIds).size === dados.itemIds.length, {
+    message: 'Cada item deve aparecer uma unica vez',
+});
+const anexoParam = z.object({ id: z.string().uuid(), anexoId: z.string().uuid() });
+const itemParam = z.object({ id: z.string().uuid(), itemId: z.string().uuid() });
+const arquivoQuery = z.object({
+    download: z.string().optional().describe('1 forca o navegador a baixar em vez de exibir'),
+    miniatura: z.string().optional().describe('1 serve a miniatura webp; sem ela, o original'),
+});
 /* ------------------------------------------------------------------ *
  * Transicoes de status: e aqui que os relogios de SLA param e voltam
  * ------------------------------------------------------------------ */
@@ -125,7 +155,23 @@ async function validarResponsavel(projetoId, responsavelId, req) {
 export async function rotasOs(app) {
     app.addHook('preHandler', autenticar);
     /** Quadro Kanban de um projeto: todas as O.S. com o SLA ja calculado. */
-    app.get('/projetos/:id/os', async (req) => {
+    app.get('/projetos/:id/os', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Quadro Kanban do projeto, com o SLA ja calculado',
+            descricao: 'Uma chamada monta o quadro inteiro: projeto, categorias e as O.S. com os dois relogios ' +
+                'resolvidos. O SLA nao e persistido — mudar uma politica hoje ja muda o semaforo de um ' +
+                'card aberto ontem. Ordenado por `ordem` e, em empate, pelas mais recentes.',
+            params: uuidParam,
+            ok: {
+                schema: z.object({
+                    projeto: projetoSchema,
+                    categorias: z.array(categoriaSchema),
+                    ordens: z.array(osComSlaSchema),
+                }),
+            },
+        }),
+    }, async (req) => {
         const { id: projetoId } = validar(idParam, req.params);
         const { tenantId } = req.user;
         await garantirAcessoProjeto(req, projetoId);
@@ -149,7 +195,19 @@ export async function rotasOs(app) {
             ordens: lista.map((os) => ({ ...os, sla: calcularSla(os, politicas, cats, agora) })),
         };
     });
-    app.post('/os', async (req, reply) => {
+    app.post('/os', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Abre uma O.S. (evento ou tarefa)',
+            descricao: 'O `codigo` (OS-ano-sequencial) e gerado pela API. Um responsavel indicado precisa ' +
+                'participar do projeto — a nao ser que seja admin, que enxerga tudo — e recebe ' +
+                'notificacao na hora. O `status` inicial ja acerta os relogios: nascer em `atendendo` ' +
+                'marca o inicio do atendimento.',
+            body: criarSchema,
+            ok: { status: 201, schema: z.object({ os: osSchema }), descricao: 'O.S. aberta' },
+            erros: [404],
+        }),
+    }, async (req, reply) => {
         const dados = validar(criarSchema, req.body);
         const { tenantId, usuarioId, nome } = contexto(req);
         await garantirAcessoProjeto(req, dados.projetoId);
@@ -192,7 +250,15 @@ export async function rotasOs(app) {
         return reply.code(201).send({ os: criada });
     });
     /** Atividades atribuídas ao usuário logado, agrupáveis por status no front. */
-    app.get('/os/minhas', async (req) => {
+    app.get('/os/minhas', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'As O.S. em que voce e o responsavel',
+            descricao: 'Atravessa projetos: e a pergunta "o que esta comigo", nao "o que ha neste quadro". ' +
+                'Inclui finalizadas; o front agrupa por status.',
+            ok: { schema: z.object({ ordens: z.array(osComSlaSchema) }) },
+        }),
+    }, async (req) => {
         const { tenantId, usuarioId } = contexto(req);
         const [lista, politicas, cats] = await Promise.all([
             db.query.ordensServico.findMany({
@@ -205,7 +271,26 @@ export async function rotasOs(app) {
         return { ordens: lista.map((os) => ({ ...os, sla: calcularSla(os, politicas, cats, new Date()) })) };
     });
     /** Detalhe completo: filhos + SLA + links de aprovacao. */
-    app.get('/os/:id', async (req) => {
+    app.get('/os/:id', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Detalhe completo: filhos, SLA e links de aprovacao',
+            descricao: 'Tudo o que a tela de detalhe precisa, em uma ida so. Os anexos vem sem `caminho` nem ' +
+                '`fileId`: o arquivo so sai por `GET /anexos/{id}/arquivo`. Comentarios internos ' +
+                'aparecem aqui — e so na pagina publica que eles somem.',
+            params: uuidParam,
+            ok: {
+                schema: z.object({
+                    os: osComSlaSchema,
+                    checklist: z.array(checklistItemSchema),
+                    anexos: z.array(anexoSchema),
+                    comentarios: z.array(comentarioSchema),
+                    historico: z.array(historicoSchema),
+                    links: z.array(linkSchema),
+                }),
+            },
+        }),
+    }, async (req) => {
         const { id } = validar(idParam, req.params);
         const { tenantId } = req.user;
         const os = await buscarOsVisivel(id, req);
@@ -239,7 +324,17 @@ export async function rotasOs(app) {
             links,
         };
     });
-    app.patch('/os/:id', async (req) => {
+    app.patch('/os/:id', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Edita a O.S.',
+            descricao: 'Nao move o card: para isso existe `PATCH /os/{id}/status`, que mexe nos relogios. ' +
+                '`projetoId` tambem nao entra — mudar de projeto mudaria quem enxerga a O.S.',
+            params: uuidParam,
+            body: atualizarSchema,
+            ok: { schema: z.object({ os: osSchema }) },
+        }),
+    }, async (req) => {
         const { id } = validar(idParam, req.params);
         const dados = validar(atualizarSchema, req.body);
         const { tenantId, usuarioId, nome } = contexto(req);
@@ -272,12 +367,22 @@ export async function rotasOs(app) {
         return { os: atualizada };
     });
     /** Movimento do Kanban. Sempre manual — a aprovacao nao move o card sozinha. */
-    app.patch('/os/:id/status', async (req) => {
+    app.patch('/os/:id/status', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Move o card no Kanban',
+            descricao: 'E aqui que os relogios param e voltam: `atendendo` marca o inicio do atendimento na ' +
+                'primeira vez; `pausado` congela o SLA e o tempo parado e descontado na saida; ' +
+                '`finalizado` fecha, e reabrir volta a contar. Nenhuma outra rota move o card — nem a ' +
+                'aprovacao do cliente, que so registra o parecer. Mandar o status atual sem `ordem` e ' +
+                'no-op e devolve a O.S. como esta.',
+            params: uuidParam,
+            body: statusSchema,
+            ok: { schema: z.object({ os: osSchema }) },
+        }),
+    }, async (req) => {
         const { id } = validar(idParam, req.params);
-        const { status, ordem } = validar(z.object({
-            status: z.enum(['a_fazer', 'atendendo', 'pausado', 'em_aprovacao', 'finalizado']),
-            ordem: z.number().int().min(0).optional(),
-        }), req.body);
+        const { status, ordem } = validar(statusSchema, req.body);
         const { tenantId, usuarioId, nome } = contexto(req);
         const os = await buscarOsVisivel(id, req);
         if (os.status === status && ordem === undefined)
@@ -310,7 +415,16 @@ export async function rotasOs(app) {
         }
         return { os: atualizada };
     });
-    app.delete('/os/:id', async (req, reply) => {
+    app.delete('/os/:id', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Apaga a O.S.',
+            descricao: 'Leva checklist, comentarios, historico, links e anexos. Os arquivos saem do storage ' +
+                'aqui, no codigo: o cascade do banco nao alcanca o bucket. Nao ha desfazer.',
+            params: uuidParam,
+            ok: { status: 204, schema: null, descricao: 'O.S. apagada. Sem corpo.' },
+        }),
+    }, async (req, reply) => {
         const { id } = validar(idParam, req.params);
         await buscarOsVisivel(id, req);
         // o cascade do banco leva as linhas, nao os arquivos: sem isto o bucket
@@ -325,9 +439,20 @@ export async function rotasOs(app) {
         return reply.code(204).send();
     });
     /* ---------------------------- comentarios ---------------------------- */
-    app.post('/os/:id/comentarios', async (req, reply) => {
+    app.post('/os/:id/comentarios', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Comenta na O.S.',
+            descricao: 'O primeiro comentario **publico** marca a primeira resposta do SLA — comentario interno ' +
+                'nao serve, porque o cliente nao o ve e o relogio mede a resposta a ele. ' +
+                'Interno tambem nao gera notificacao fora do time.',
+            params: uuidParam,
+            body: comentarioBodySchema,
+            ok: { status: 201, schema: z.object({ comentario: comentarioSchema }) },
+        }),
+    }, async (req, reply) => {
         const { id } = validar(idParam, req.params);
-        const { texto, interno } = validar(z.object({ texto: z.string().min(1, 'Escreva algo'), interno: z.boolean().default(false) }), req.body);
+        const { texto, interno } = validar(comentarioBodySchema, req.body);
         const { tenantId, usuarioId, nome } = contexto(req);
         const os = await buscarOsVisivel(id, req);
         const [criado] = await db
@@ -359,7 +484,28 @@ export async function rotasOs(app) {
     });
     /* ------------------------------ anexos ------------------------------- */
     /** Upload multipart. O arquivo vai para o bucket (ou disco) e so a linha fica no banco. */
-    app.post('/os/:id/anexos', async (req, reply) => {
+    app.post('/os/:id/anexos', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Envia um anexo (multipart)',
+            descricao: 'Um arquivo por chamada, no campo `arquivo`, no maximo 20 por O.S. O tipo e conferido ' +
+                'pelos primeiros bytes, nao pelo que o navegador declara: `.exe` renomeado para `.jpg` ' +
+                'e recusado, e `.svg` fica de fora de proposito (e documento e carrega script). ' +
+                '**Imagem acima do teto do storage e encolhida em vez de recusada** e volta com ' +
+                '`reduzida: true` — foto de celular tem 4-8 MB e o bucket corta em ~1 MB. Arquivo que ' +
+                'nao e imagem, acima do teto, da 400. Acima do limite do proxy, 413.',
+            params: uuidParam,
+            arquivo: { campo: 'arquivo', descricao: 'Imagem, PDF, texto, ZIP ou documento do Office' },
+            ok: {
+                status: 201,
+                schema: z.object({
+                    anexo: anexoSchema,
+                    reduzida: z.boolean().describe('true = a imagem foi convertida para webp menor'),
+                }),
+            },
+            erros: [413],
+        }),
+    }, async (req, reply) => {
         const { id } = validar(idParam, req.params);
         const { tenantId, usuarioId, nome: autor } = contexto(req);
         // valida a posse ANTES de tocar no storage
@@ -450,9 +596,20 @@ export async function rotasOs(app) {
      * Proxy de download. O cliente nunca recebe a URL do bucket — ela abre sem
      * token, entao entrega-la tornaria o anexo publico para sempre.
      */
-    app.get('/anexos/:id/arquivo', async (req, reply) => {
+    app.get('/anexos/:id/arquivo', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Baixa o arquivo do anexo (proxy autenticado)',
+            descricao: 'O bucket e publico: sua URL abre sem token. Por isso ela nunca chega ao cliente e todo ' +
+                'download passa por aqui, filtrado pelo tenant **e** pelo projeto. Responde 304 quando o ' +
+                '`If-None-Match` bate com o checksum.',
+            params: uuidParam,
+            query: arquivoQuery,
+            binario: { descricao: 'O arquivo, com o content-type real e cache privado de 1 hora' },
+        }),
+    }, async (req, reply) => {
         const { id } = validar(idParam, req.params);
-        const { download, miniatura } = validar(z.object({ download: z.string().optional(), miniatura: z.string().optional() }), req.query);
+        const { download, miniatura } = validar(arquivoQuery, req.query);
         // filtra pelo tenant do JWT: anexo de outro tenant e 404, nao 403
         const anexo = await db.query.anexos.findFirst({
             where: and(eq(anexos.id, id), eq(anexos.tenantId, req.user.tenantId)),
@@ -471,8 +628,17 @@ export async function rotasOs(app) {
             anexar: download === '1',
         });
     });
-    app.delete('/os/:id/anexos/:anexoId', async (req, reply) => {
-        const { id, anexoId } = validar(z.object({ id: z.string().uuid(), anexoId: z.string().uuid() }), req.params);
+    app.delete('/os/:id/anexos/:anexoId', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Remove um anexo',
+            descricao: 'Tira o arquivo e a miniatura do storage antes da linha do banco. Falha no storage nao ' +
+                'trava a remocao: arquivo sobrando incomoda menos que anexo fantasma na tela.',
+            params: anexoParam,
+            ok: { status: 204, schema: null, descricao: 'Anexo removido. Sem corpo.' },
+        }),
+    }, async (req, reply) => {
+        const { id, anexoId } = validar(anexoParam, req.params);
         const { tenantId, nome: autor } = contexto(req);
         await buscarOsVisivel(id, req);
         const anexo = await db.query.anexos.findFirst({
@@ -488,16 +654,33 @@ export async function rotasOs(app) {
         return reply.code(204).send();
     });
     /* ----------------------------- checklist ----------------------------- */
-    app.post('/os/:id/checklist', async (req, reply) => {
+    app.post('/os/:id/checklist', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Acrescenta um item ao checklist',
+            params: uuidParam,
+            body: itemBodySchema,
+            ok: { status: 201, schema: z.object({ item: checklistItemSchema }) },
+        }),
+    }, async (req, reply) => {
         const { id } = validar(idParam, req.params);
-        const { texto, ordem } = validar(z.object({ texto: z.string().min(1), ordem: z.number().int().min(0).default(0) }), req.body);
+        const { texto, ordem } = validar(itemBodySchema, req.body);
         await buscarOsVisivel(id, req);
         const [criado] = await db.insert(checklistItens).values({ osId: id, texto, ordem }).returning();
         return reply.code(201).send({ item: criado });
     });
-    app.patch('/os/:id/checklist/:itemId', async (req) => {
-        const { id, itemId } = validar(z.object({ id: z.string().uuid(), itemId: z.string().uuid() }), req.params);
-        const dados = validar(z.object({ texto: z.string().min(1).optional(), feito: z.boolean().optional() }), req.body);
+    app.patch('/os/:id/checklist/:itemId', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Edita o texto ou marca o item como feito',
+            descricao: 'A `ordem` do item ainda nao e editavel por esta rota.',
+            params: itemParam,
+            body: itemPatchSchema,
+            ok: { schema: z.object({ item: checklistItemSchema }) },
+        }),
+    }, async (req) => {
+        const { id, itemId } = validar(itemParam, req.params);
+        const dados = validar(itemPatchSchema, req.body);
         await buscarOsVisivel(id, req);
         const [atualizado] = await db
             .update(checklistItens)
@@ -508,8 +691,54 @@ export async function rotasOs(app) {
             throw naoEncontrado('Item');
         return { item: atualizado };
     });
-    app.delete('/os/:id/checklist/:itemId', async (req, reply) => {
-        const { id, itemId } = validar(z.object({ id: z.string().uuid(), itemId: z.string().uuid() }), req.params);
+    app.put('/os/:id/checklist/ordem', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Reordena todo o checklist',
+            descricao: 'Recebe a lista completa de IDs na ordem final. O servidor confere que ela contem exatamente os itens da O.S. antes de gravar, dentro de uma transacao.',
+            params: idParam,
+            body: ordenarChecklistSchema,
+            ok: { schema: z.object({ itens: z.array(checklistItemSchema) }) },
+        }),
+    }, async (req) => {
+        const { id } = validar(idParam, req.params);
+        const { itemIds } = validar(ordenarChecklistSchema, req.body);
+        await buscarOsVisivel(id, req);
+        const atuais = await db.query.checklistItens.findMany({
+            where: eq(checklistItens.osId, id),
+            columns: { id: true },
+        });
+        const idsAtuais = new Set(atuais.map((item) => item.id));
+        if (idsAtuais.size !== itemIds.length || itemIds.some((itemId) => !idsAtuais.has(itemId))) {
+            throw invalido('A ordem deve conter exatamente os itens atuais do checklist.');
+        }
+        await db.transaction(async (tx) => {
+            const ordemPorId = new Map(itemIds.map((itemId, ordem) => [itemId, ordem]));
+            // Toda requisicao trava as mesmas linhas na mesma ordem. Sem isso, duas
+            // listas com ordens diferentes poderiam travar A→B e B→A e o Postgres
+            // precisaria abortar uma delas por deadlock.
+            for (const itemId of [...itemIds].sort()) {
+                await tx
+                    .update(checklistItens)
+                    .set({ ordem: ordemPorId.get(itemId) })
+                    .where(and(eq(checklistItens.id, itemId), eq(checklistItens.osId, id)));
+            }
+        });
+        const itens = await db.query.checklistItens.findMany({
+            where: eq(checklistItens.osId, id),
+            orderBy: asc(checklistItens.ordem),
+        });
+        return { itens };
+    });
+    app.delete('/os/:id/checklist/:itemId', {
+        schema: doc({
+            tag: 'Ordens de servico',
+            resumo: 'Remove um item do checklist',
+            params: itemParam,
+            ok: { status: 204, schema: null, descricao: 'Item removido. Sem corpo.' },
+        }),
+    }, async (req, reply) => {
+        const { id, itemId } = validar(itemParam, req.params);
         await buscarOsVisivel(id, req);
         await db.delete(checklistItens).where(and(eq(checklistItens.id, itemId), eq(checklistItens.osId, id)));
         return reply.code(204).send();

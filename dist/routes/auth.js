@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { db } from '../db/client.js';
 import { categorias, politicasSla, tenants, usuarios } from '../db/schema.js';
 import { autenticar } from '../lib/auth.js';
+import { doc } from '../lib/doc.js';
+import { okSchema, sessaoSchema, tenantSchema, usuarioSchema } from '../lib/esquemas.js';
 import { usuarioPublico } from './equipe.js';
 import { conflito, invalido, naoEncontrado, validar } from '../lib/http.js';
 import { SLA_PADRAO } from '../lib/sla.js';
@@ -34,9 +36,32 @@ const loginSchema = z.object({
     email: z.string().email('E-mail invalido'),
     senha: z.string().min(1, 'Informe a senha'),
 });
+const perfilSchema = z.object({
+    nome: z.string().min(2).optional(),
+    cargo: z.string().max(80).nullable().optional(),
+    avatarUrl: z.string().url().nullable().optional(),
+});
+const senhaSchema = z.object({
+    senhaAtual: z.string().min(1, 'Informe a senha atual'),
+    novaSenha: z.string().min(8, 'A nova senha precisa ter ao menos 8 caracteres'),
+});
 export async function rotasAuth(app) {
     /** Cadastro: cria o tenant, o usuario admin e os dados base do workspace. */
-    app.post('/auth/registrar', { config: { rateLimit: { max: 10, timeWindow: '1 hour' } } }, async (req, reply) => {
+    app.post('/auth/registrar', {
+        config: { rateLimit: { max: 10, timeWindow: '1 hour' } },
+        schema: doc({
+            tag: 'Autenticacao',
+            resumo: 'Cria o workspace, o usuario admin e os dados base',
+            descricao: 'Uma chamada monta o tenant inteiro: admin, 6 categorias e as 4 politicas de SLA padrao. ' +
+                'O e-mail e unico em toda a base, nao apenas dentro do tenant — e o que permite fazer login ' +
+                'sem informar o workspace. Ja devolve o token: quem cadastra entra direto. ' +
+                'Limite de 10 por hora por IP.',
+            publico: true,
+            body: registrarSchema,
+            ok: { status: 201, schema: sessaoSchema, descricao: 'Workspace criado e sessao aberta' },
+            erros: [409, 429],
+        }),
+    }, async (req, reply) => {
         const dados = validar(registrarSchema, req.body);
         const email = dados.email.toLowerCase().trim();
         const existente = await db.query.usuarios.findFirst({ where: eq(usuarios.email, email) });
@@ -89,7 +114,20 @@ export async function rotasAuth(app) {
             tenant: { id: resultado.tenant.id, nome: resultado.tenant.nome, slug: resultado.tenant.slug },
         });
     });
-    app.post('/auth/login', { config: { rateLimit: { max: 20, timeWindow: '5 minutes' } } }, async (req, reply) => {
+    app.post('/auth/login', {
+        config: { rateLimit: { max: 20, timeWindow: '5 minutes' } },
+        schema: doc({
+            tag: 'Autenticacao',
+            resumo: 'Autentica e devolve o JWT',
+            descricao: 'O 401 usa a mesma mensagem para e-mail inexistente, senha errada e conta desativada. ' +
+                'Distinguir os casos entregaria a quem tenta a informacao de que a conta existe. ' +
+                'Limite de 20 por 5 minutos por IP.',
+            publico: true,
+            body: loginSchema,
+            ok: { schema: sessaoSchema, descricao: 'Sessao aberta' },
+            erros: [401, 429],
+        }),
+    }, async (req, reply) => {
         const dados = validar(loginSchema, req.body);
         const email = dados.email.toLowerCase().trim();
         const usuario = await db.query.usuarios.findFirst({ where: eq(usuarios.email, email) });
@@ -113,7 +151,16 @@ export async function rotasAuth(app) {
             tenant: tenant ? { id: tenant.id, nome: tenant.nome, slug: tenant.slug } : null,
         });
     });
-    app.get('/auth/eu', { preHandler: autenticar }, async (req) => {
+    app.get('/auth/eu', {
+        preHandler: autenticar,
+        schema: doc({
+            tag: 'Autenticacao',
+            resumo: 'Perfil de quem esta com o token',
+            descricao: 'O front chama no boot para saber se a sessao guardada ainda vale.',
+            ok: { schema: z.object({ usuario: usuarioSchema, tenant: tenantSchema.nullable() }) },
+            erros: [404],
+        }),
+    }, async (req) => {
         const usuario = await db.query.usuarios.findFirst({ where: eq(usuarios.id, req.user.sub) });
         if (!usuario)
             throw naoEncontrado('Usuario');
@@ -124,19 +171,34 @@ export async function rotasAuth(app) {
         };
     });
     /** Equipe do tenant — usada para o seletor de responsável e os avatares do card. */
-    app.get('/usuarios', { preHandler: autenticar }, async (req) => {
+    app.get('/usuarios', {
+        preHandler: autenticar,
+        schema: doc({
+            tag: 'Equipe',
+            resumo: 'Todos os usuarios do tenant, em ordem alfabetica',
+            descricao: 'Alimenta o seletor de responsavel e os avatares do card. Inclui desativados: ' +
+                'card antigo continua tendo dono, e esconder o nome deixaria o historico sem sentido.',
+            ok: { schema: z.object({ usuarios: z.array(usuarioSchema) }) },
+        }),
+    }, async (req) => {
         const equipe = await db.query.usuarios.findMany({
             where: eq(usuarios.tenantId, req.user.tenantId),
             orderBy: (u, { asc }) => [asc(u.nome)],
         });
         return { usuarios: equipe.map(comoPublico) };
     });
-    app.patch('/auth/eu', { preHandler: autenticar }, async (req) => {
-        const dados = validar(z.object({
-            nome: z.string().min(2).optional(),
-            cargo: z.string().max(80).nullable().optional(),
-            avatarUrl: z.string().url().nullable().optional(),
-        }), req.body);
+    app.patch('/auth/eu', {
+        preHandler: autenticar,
+        schema: doc({
+            tag: 'Autenticacao',
+            resumo: 'Edita o proprio nome e cargo',
+            descricao: 'Papel e e-mail nao entram: mudar o proprio papel seria escalar privilegio.',
+            body: perfilSchema,
+            ok: { schema: z.object({ usuario: usuarioSchema }) },
+            erros: [404],
+        }),
+    }, async (req) => {
+        const dados = validar(perfilSchema, req.body);
         const [atualizado] = await db
             .update(usuarios)
             .set(dados)
@@ -147,11 +209,19 @@ export async function rotasAuth(app) {
         return { usuario: comoPublico(atualizado) };
     });
     /** Troca a propria senha. Exige a atual — token roubado nao vira sequestro. */
-    app.patch('/auth/senha', { preHandler: autenticar }, async (req) => {
-        const { senhaAtual, novaSenha } = validar(z.object({
-            senhaAtual: z.string().min(1, 'Informe a senha atual'),
-            novaSenha: z.string().min(8, 'A nova senha precisa ter ao menos 8 caracteres'),
-        }), req.body);
+    app.patch('/auth/senha', {
+        preHandler: autenticar,
+        schema: doc({
+            tag: 'Autenticacao',
+            resumo: 'Troca a propria senha',
+            descricao: 'Exige a senha atual mesmo com o token na mao: sem isso, um token roubado viraria ' +
+                'sequestro definitivo da conta. A nova precisa ser diferente da atual.',
+            body: senhaSchema,
+            ok: { schema: okSchema },
+            erros: [404],
+        }),
+    }, async (req) => {
+        const { senhaAtual, novaSenha } = validar(senhaSchema, req.body);
         const usuario = await db.query.usuarios.findFirst({ where: eq(usuarios.id, req.user.sub) });
         if (!usuario)
             throw naoEncontrado('Usuario');

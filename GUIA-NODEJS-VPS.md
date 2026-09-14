@@ -1,5 +1,8 @@
 # Guia reutilizável: deploy de aplicações Node.js em VPS
 
+> **Guia reutilizável, não backlog.** Para o deploy e as evidências específicas do SysAceite,
+> consulte [../13-setembro-fechamento-gaps.md](../13-setembro-fechamento-gaps.md).
+
 Guia para aplicações Node.js/Fastify, Express ou similares que usam uma porta HTTP e variáveis
 de ambiente secretas.
 
@@ -51,8 +54,8 @@ Use `.env.example` como modelo. Nunca envie `.env` ao GitHub, à imagem Docker o
 Para esta API, `DATABASE_URL` e `JWT_SECRET` são obrigatórias:
 
 ```env
-DATABASE_URL=...
-JWT_SECRET=...
+DATABASE_URL=[CREDENCIAL_REMOVIDA]
+JWT_SECRET=[CREDENCIAL_REMOVIDA]
 NODE_ENV=production
 HOST=0.0.0.0
 PORT=3333

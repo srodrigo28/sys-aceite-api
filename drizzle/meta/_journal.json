@@ -50,6 +50,13 @@
       "when": 1789004551381,
       "tag": "0006_grupos_notificacoes",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789100000000,
+      "tag": "0007_atividades_rename",
+      "breakpoints": true
     }
   ]
 }
