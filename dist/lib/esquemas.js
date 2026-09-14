@@ -119,7 +119,7 @@ export const osSchema = z.object({
     ordem: z.number().int().describe('Posicao dentro da coluna do Kanban'),
     responsavelId: uuid()
         .nullable()
-        .describe('O principal. Mantido para cliente antigo — prefira `responsaveis`'),
+        .describe('DERIVADO do primeiro de `responsaveis`. Nao e mais coluna — prefira a lista.'),
     responsaveis: z
         .array(uuid())
         .optional()

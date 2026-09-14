@@ -132,10 +132,23 @@ await app.register(jwt, {
 await app.register(rateLimit, {
   global: false,
   allowList: (req) => env.NODE_ENV !== 'production' && ['127.0.0.1', '::1'].includes(req.ip),
-  errorResponseBuilder: (_req, contexto) => ({
-    erro: 'muitas_tentativas',
-    mensagem: `Muitas tentativas. Tente de novo em ${Math.ceil(contexto.ttl / 1000)}s.`,
-  }),
+  /**
+   * O plugin faz `throw errorResponseBuilder(...)`, e o que sai daqui atravessa
+   * o `setErrorHandler`. Devolver um objeto simples fazia o `erroDoFastify` nao
+   * reconhecer status nenhum e cair no 500 generico: quem estourava o limite
+   * via "Algo deu errado" em vez de saber que era limite, e em quanto tempo
+   * podia tentar de novo.
+   *
+   * Precisa ser um Error COM `statusCode` — e o que o proprio padrao do plugin
+   * devolve. As demais propriedades sobrevivem ate o handler.
+   */
+  errorResponseBuilder: (_req, contexto) => {
+    const segundos = Math.ceil(contexto.ttl / 1000)
+    return Object.assign(new Error(`Muitas tentativas. Tente de novo em ${segundos}s.`), {
+      statusCode: contexto.statusCode ?? 429,
+      code: 'muitas_tentativas',
+    })
+  },
 })
 
 // POST sem corpo (ex.: /links/:id/revogar) nao pode quebrar so porque o
