@@ -170,6 +170,30 @@ export const atividades = pgTable('atividades', {
     index('os_projeto_status_idx').on(t.projetoId, t.status),
     index('os_tenant_idx').on(t.tenantId),
 ]);
+/**
+ * Quem responde por uma atividade. Uma atividade pode ter varios.
+ *
+ * `principal` e atributo do VINCULO, nao coluna da atividade. A tentacao e
+ * guardar "o principal" em `atividades.responsavel_id` e usar esta tabela so
+ * para os demais — e o erro que a nota de `grupos` descreve: dois caminhos para
+ * a mesma resposta, que divergem com o tempo. Aqui ha um caminho so.
+ *
+ * Exatamente um principal por atividade, garantido pelo indice parcial.
+ */
+export const atividadeResponsaveis = pgTable('atividade_responsaveis', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    atividadeId: uuid('atividade_id')
+        .notNull()
+        .references(() => atividades.id, { onDelete: 'cascade' }),
+    usuarioId: uuid('usuario_id')
+        .notNull()
+        .references(() => usuarios.id, { onDelete: 'cascade' }),
+    principal: boolean('principal').notNull().default(false),
+    criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    uniqueIndex('atividade_responsaveis_idx').on(t.atividadeId, t.usuarioId),
+    index('atividade_responsaveis_usuario_idx').on(t.usuarioId),
+]);
 /* ------------------------------------------------------------------ *
  * Filhos da O.S.
  * ------------------------------------------------------------------ */
@@ -441,6 +465,16 @@ export const atividadesRelations = relations(atividades, ({ one, many }) => ({
     comentarios: many(comentarios),
     historico: many(historico),
     links: many(linksAprovacao),
+}));
+export const atividadeResponsaveisRelations = relations(atividadeResponsaveis, ({ one }) => ({
+    atividade: one(atividades, {
+        fields: [atividadeResponsaveis.atividadeId],
+        references: [atividades.id],
+    }),
+    usuario: one(usuarios, {
+        fields: [atividadeResponsaveis.usuarioId],
+        references: [usuarios.id],
+    }),
 }));
 export const checklistRelations = relations(checklistItens, ({ one }) => ({
     os: one(atividades, { fields: [checklistItens.osId], references: [atividades.id] }),

@@ -404,7 +404,7 @@ export async function rotasPublicas(app: FastifyInstance): Promise<void> {
     if (osDoLink) {
       await notificar({
         tenantId: osDoLink.tenantId,
-        destinatarios: await interessadosNaOs(osDoLink.tenantId, osDoLink.responsavelId),
+        destinatarios: await interessadosNaOs(osDoLink.tenantId, osDoLink.id),
         tipo: 'os_parecer',
         titulo: aprovado
           ? `${osDoLink.codigo} aprovada pelo cliente`

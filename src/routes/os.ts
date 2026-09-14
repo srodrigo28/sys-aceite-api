@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { db } from '../db/client.js'
 import {
   anexos,
+  atividadeResponsaveis,
   categorias,
   checklistItens,
   comentarios,
@@ -69,6 +70,13 @@ const criarSchema = z.object({
   nivel: z.enum(['n1', 'n2', 'n3']).default('n1'),
   status: z.enum(['a_fazer', 'atendendo', 'pausado', 'em_aprovacao', 'finalizado']).default('a_fazer'),
   responsavelId: z.string().uuid().nullish(),
+  /**
+   * Quem responde pela atividade. O primeiro da lista e o principal.
+   *
+   * `responsavelId` continua aceito para nao quebrar cliente antigo: quando
+   * vem sozinho, vira uma lista de um. Sai quando o web parar de mandar.
+   */
+  responsaveisIds: z.array(z.string().uuid()).optional(),
   solicitante: z.string().max(120).nullish(),
 })
 
@@ -213,6 +221,59 @@ async function validarResponsavel(projetoId: string, responsavelId: string | nul
   if (!membro) throw invalido('O responsavel precisa participar deste projeto.')
 }
 
+/** A mesma regra, pessoa por pessoa. Lista vazia e valida: atividade sem dono. */
+async function validarResponsaveis(projetoId: string, ids: string[], req: FastifyRequest) {
+  for (const id of new Set(ids)) await validarResponsavel(projetoId, id, req)
+}
+
+/**
+ * Grava a lista de responsaveis de uma atividade, substituindo a anterior.
+ *
+ * O primeiro da lista e o principal — e ele que aparece onde so cabe um nome.
+ * Devolve quem ENTROU, nao a lista inteira: e isso que vai para a notificacao.
+ * Avisar todo mundo a cada edicao faria quem ja estava receber "voce foi
+ * atribuido" de novo toda vez que outra pessoa entrasse.
+ */
+async function definirResponsaveis(
+  atividadeId: string,
+  ids: string[],
+  tx: typeof db = db,
+): Promise<string[]> {
+  const antes = await tx
+    .select({ usuarioId: atividadeResponsaveis.usuarioId })
+    .from(atividadeResponsaveis)
+    .where(eq(atividadeResponsaveis.atividadeId, atividadeId))
+  const jaEstavam = new Set(antes.map((r) => r.usuarioId))
+
+  const unicos = [...new Set(ids)]
+  await tx.delete(atividadeResponsaveis).where(eq(atividadeResponsaveis.atividadeId, atividadeId))
+  if (unicos.length > 0) {
+    await tx.insert(atividadeResponsaveis).values(
+      unicos.map((usuarioId, i) => ({ atividadeId, usuarioId, principal: i === 0 })),
+    )
+  }
+  return unicos.filter((id) => !jaEstavam.has(id))
+}
+
+/** Os responsaveis de varias atividades de uma vez, para as listas. */
+async function responsaveisDe(ids: string[]): Promise<Map<string, string[]>> {
+  const mapa = new Map<string, string[]>()
+  if (ids.length === 0) return mapa
+  const linhas = await db
+    .select({
+      atividadeId: atividadeResponsaveis.atividadeId,
+      usuarioId: atividadeResponsaveis.usuarioId,
+      principal: atividadeResponsaveis.principal,
+    })
+    .from(atividadeResponsaveis)
+    .where(inArray(atividadeResponsaveis.atividadeId, ids))
+  // principal primeiro: o front usa o [0] onde so cabe um nome
+  for (const l of linhas.sort((a, b) => Number(b.principal) - Number(a.principal))) {
+    mapa.set(l.atividadeId, [...(mapa.get(l.atividadeId) ?? []), l.usuarioId])
+  }
+  return mapa
+}
+
 export async function rotasOs(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', autenticar)
 
@@ -254,10 +315,15 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     ])
 
     const agora = new Date()
+    const porAtividade = await responsaveisDe(lista.map((o) => o.id))
     return {
       projeto,
       categorias: cats,
-      ordens: lista.map((os) => ({ ...os, sla: calcularSla(os, politicas, cats, agora) })),
+      ordens: lista.map((os) => ({
+        ...os,
+        responsaveis: porAtividade.get(os.id) ?? [],
+        sla: calcularSla(os, politicas, cats, agora),
+      })),
     }
   })
 
@@ -283,7 +349,8 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
       where: and(eq(projetos.id, dados.projetoId), eq(projetos.tenantId, tenantId)),
     })
     if (!projeto) throw naoEncontrado('Projeto')
-    await validarResponsavel(dados.projetoId, dados.responsavelId, req)
+    const escolhidos = dados.responsaveisIds ?? (dados.responsavelId ? [dados.responsavelId] : [])
+    await validarResponsaveis(dados.projetoId, escolhidos, req)
 
     const agora = new Date()
     const [criada] = await db
@@ -300,13 +367,15 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
       .returning()
     if (!criada) throw invalido('Nao foi possivel criar a O.S.')
 
+    const entraram = await definirResponsaveis(criada.id, escolhidos)
+
     await registrar(criada.id, 'criacao', `O.S. aberta em ${projeto.nome}`, nome)
 
     // atividade ja nasce atribuida: avisa quem vai tocar
-    if (criada.responsavelId) {
+    if (entraram.length > 0) {
       await notificar({
         tenantId,
-        destinatarios: [criada.responsavelId],
+        destinatarios: entraram,
         tipo: 'os_atribuida',
         titulo: `Nova atividade: ${criada.titulo}`,
         descricao: `${criada.codigo} em ${projeto.nome}`,
@@ -317,7 +386,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
       })
     }
 
-    return reply.code(201).send({ os: criada })
+    return reply.code(201).send({ os: { ...criada, responsaveis: escolhidos } })
   })
 
   /** Atividades atribuídas ao usuário logado, agrupáveis por status no front. */
@@ -334,13 +403,31 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     const { tenantId, usuarioId } = contexto(req)
     const [lista, politicas, cats] = await Promise.all([
       db.query.atividades.findMany({
-        where: and(eq(atividades.tenantId, tenantId), eq(atividades.responsavelId, usuarioId)),
+        // "minhas" passa a significar QUALQUER vinculo, nao so o principal:
+        // quem e o segundo responsavel tambem precisa ver a atividade na lista
+        where: and(
+          eq(atividades.tenantId, tenantId),
+          inArray(
+            atividades.id,
+            db
+              .select({ id: atividadeResponsaveis.atividadeId })
+              .from(atividadeResponsaveis)
+              .where(eq(atividadeResponsaveis.usuarioId, usuarioId)),
+          ),
+        ),
         orderBy: [asc(atividades.status), asc(atividades.ordem), desc(atividades.criadoEm)],
       }),
       db.query.politicasSla.findMany({ where: eq(politicasSla.tenantId, tenantId) }),
       db.query.categorias.findMany({ where: eq(categorias.tenantId, tenantId) }),
     ])
-    return { ordens: lista.map((os) => ({ ...os, sla: calcularSla(os, politicas, cats, new Date()) })) }
+    const porAtividade = await responsaveisDe(lista.map((o) => o.id))
+    return {
+      ordens: lista.map((os) => ({
+        ...os,
+        responsaveis: porAtividade.get(os.id) ?? [],
+        sla: calcularSla(os, politicas, cats, new Date()),
+      })),
+    }
   })
 
   /** Detalhe completo: filhos + SLA + links de aprovacao. */
@@ -392,7 +479,11 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     ])
 
     return {
-      os: { ...os, sla: calcularSla(os, politicas, cats, new Date()) },
+      os: {
+        ...os,
+        responsaveis: (await responsaveisDe([os.id])).get(os.id) ?? [],
+        sla: calcularSla(os, politicas, cats, new Date()),
+      },
       checklist,
       anexos: arquivos.map(anexoPublico),
       comentarios: comentariosOs,
@@ -417,24 +508,34 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     const dados = validar(atualizarSchema, req.body)
     const { tenantId, usuarioId, nome } = contexto(req)
     const antes = await buscarOsVisivel(id, req)
-    if (dados.responsavelId !== undefined && dados.responsavelId !== antes.responsavelId) {
-      await validarResponsavel(antes.projetoId, dados.responsavelId, req)
-    }
+    // `responsaveisIds` manda quando vem; `responsavelId` sozinho vira lista de um
+    const novaLista =
+      dados.responsaveisIds ??
+      (dados.responsavelId !== undefined
+        ? dados.responsavelId
+          ? [dados.responsavelId]
+          : []
+        : undefined)
+    if (novaLista) await validarResponsaveis(antes.projetoId, novaLista, req)
 
+    const { responsaveisIds: _lista, ...campos } = dados
     const [atualizada] = await db
       .update(atividades)
-      .set({ ...dados, atualizadoEm: new Date() })
+      .set({ ...campos, atualizadoEm: new Date() })
       .where(and(eq(atividades.id, id), eq(atividades.tenantId, tenantId)))
       .returning()
     if (!atualizada) throw naoEncontrado('O.S.')
 
+    const entraram = novaLista ? await definirResponsaveis(id, novaLista) : []
+
     await registrar(id, 'edicao', 'O.S. atualizada', nome)
 
-    // trocou de dono: quem passou a ser responsavel precisa saber
-    if (atualizada.responsavelId && atualizada.responsavelId !== antes.responsavelId) {
+    // so quem ENTROU e avisado. Notificar a lista inteira a cada edicao faria
+    // quem ja estava receber "voce foi atribuido" sempre que outra pessoa entra
+    if (entraram.length > 0) {
       await notificar({
         tenantId,
-        destinatarios: [atualizada.responsavelId],
+        destinatarios: entraram,
         tipo: 'os_atribuida',
         titulo: `Atividade atribuida a voce: ${atualizada.titulo}`,
         descricao: atualizada.codigo,
@@ -444,7 +545,8 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
         autorNome: nome,
       })
     }
-    return { os: atualizada }
+    const responsaveis = novaLista ?? (await responsaveisDe([id])).get(id) ?? []
+    return { os: { ...atualizada, responsaveis } }
   })
 
   /** Movimento do Kanban. Sempre manual — a aprovacao nao move o card sozinha. */
@@ -471,7 +573,10 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     const { tenantId, usuarioId, nome } = contexto(req)
     const os = await buscarOsVisivel(id, req)
 
-    if (os.status === status && ordem === undefined) return { os }
+    const responsaveisAtuais = (await responsaveisDe([os.id])).get(os.id) ?? []
+    if (os.status === status && ordem === undefined) {
+      return { os: { ...os, responsaveis: responsaveisAtuais } }
+    }
 
     const agora = new Date()
     const mudanca = aplicarTransicao(os, status, agora)
@@ -490,7 +595,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
       // e daqui que sai o aviso do quadro para quem acompanha
       await notificar({
         tenantId,
-        destinatarios: await interessadosNaOs(tenantId, atualizada.responsavelId),
+        destinatarios: await interessadosNaOs(tenantId, atualizada.id),
         tipo: 'os_status',
         titulo: `${atualizada.codigo} foi para ${rotulo(status)}`,
         descricao: atualizada.titulo,
@@ -500,7 +605,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
         autorNome: nome,
       })
     }
-    return { os: atualizada }
+    return { os: { ...atualizada, responsaveis: responsaveisAtuais } }
   })
 
   app.delete('/atividades/:id', {
@@ -569,7 +674,7 @@ export async function rotasOs(app: FastifyInstance): Promise<void> {
     if (!interno) {
       await notificar({
         tenantId,
-        destinatarios: await interessadosNaOs(tenantId, os.responsavelId),
+        destinatarios: await interessadosNaOs(tenantId, os.id),
         tipo: 'os_comentario',
         titulo: `Novo comentario em ${os.codigo}`,
         descricao: texto.slice(0, 160),

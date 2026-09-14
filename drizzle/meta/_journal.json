@@ -64,6 +64,13 @@
       "when": 1789110000000,
       "tag": "0008_remove_ponte_os",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789120000000,
+      "tag": "0009_atividade_responsaveis",
+      "breakpoints": true
     }
   ]
 }

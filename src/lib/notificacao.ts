@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm'
 import { db } from '../db/client.js'
-import { notificacoes, usuarios, type TipoNotificacao } from '../db/schema.js'
+import { atividadeResponsaveis, notificacoes, usuarios, type TipoNotificacao } from '../db/schema.js'
 
 /**
  * Notificacoes do sino.
@@ -68,9 +68,21 @@ export async function adminsDoTenant(tenantId: string): Promise<string[]> {
 }
 
 /** Quem acompanha uma O.S.: o responsavel e os admins do tenant. */
+/**
+ * Quem deve saber do que acontece numa atividade: os admins e TODOS os
+ * responsaveis.
+ *
+ * Antes recebia um `responsavelId` so. Com varios responsaveis, mandar apenas o
+ * principal deixaria os demais sem notificacao de comentario e de mudanca de
+ * status — justamente quem esta tocando o trabalho.
+ */
 export async function interessadosNaOs(
   tenantId: string,
-  responsavelId: string | null,
+  atividadeId: string,
 ): Promise<string[]> {
-  return [...(await adminsDoTenant(tenantId)), ...(responsavelId ? [responsavelId] : [])]
+  const responsaveis = await db
+    .select({ usuarioId: atividadeResponsaveis.usuarioId })
+    .from(atividadeResponsaveis)
+    .where(eq(atividadeResponsaveis.atividadeId, atividadeId))
+  return [...(await adminsDoTenant(tenantId)), ...responsaveis.map((r) => r.usuarioId)]
 }

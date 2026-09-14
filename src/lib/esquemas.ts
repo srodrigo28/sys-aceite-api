@@ -135,7 +135,13 @@ export const osSchema = z.object({
   nivel: z.enum(['n1', 'n2', 'n3']),
   status: z.enum(['a_fazer', 'atendendo', 'pausado', 'em_aprovacao', 'finalizado']),
   ordem: z.number().int().describe('Posicao dentro da coluna do Kanban'),
-  responsavelId: uuid().nullable(),
+  responsavelId: uuid()
+    .nullable()
+    .describe('O principal. Mantido para cliente antigo — prefira `responsaveis`'),
+  responsaveis: z
+    .array(uuid())
+    .optional()
+    .describe('Todos os responsaveis. O primeiro e o principal.'),
   solicitante: z.string().nullable(),
   abertaEm: dataHora(),
   inicioAtendimentoEm: dataHora().nullable(),
