@@ -117,7 +117,20 @@ export const categorias = pgTable(
       .notNull()
       .references(() => tenants.id, { onDelete: 'cascade' }),
     nome: text('nome').notNull(),
+    /**
+     * Cor livre, para categoria que o cliente cria. Fica como reserva.
+     *
+     * A paleta do sistema nao mora aqui: ela e propriedade do TEMA, nao do
+     * dado. Cada cor precisa de um tom por modo claro e outro por escuro, e
+     * guardar hex no banco obrigaria a migracao a cada correcao de tom.
+     */
     cor: text('cor').notNull().default('#6366f1'),
+    /**
+     * A vaga na paleta validada (1 a 6), definida em `globals.css` nos dois
+     * modos — mesma convencao de `--sla-*` e `--prio-*`. Quando preenchido,
+     * manda sobre `cor`.
+     */
+    slot: integer('slot'),
     multiplicadorSla: real('multiplicador_sla').notNull().default(1),
     criadoEm: timestamp('criado_em', { withTimezone: true }).notNull().defaultNow(),
   },

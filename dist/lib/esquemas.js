@@ -74,7 +74,12 @@ export const categoriaSchema = z.object({
     id: uuid(),
     tenantId: uuid(),
     nome: z.string(),
-    cor: z.string(),
+    cor: z.string().describe('Cor livre. Reserva — quando ha `slot`, ele manda'),
+    slot: z
+        .number()
+        .int()
+        .nullable()
+        .describe('Vaga na paleta do tema (1–6), com um tom por modo em globals.css'),
     multiplicadorSla: z.number().describe('Multiplica o prazo da politica. Infra 1.5, suporte 0.5'),
     criadoEm: dataHora(),
 });

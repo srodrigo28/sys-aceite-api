@@ -11,13 +11,24 @@ import { usuarioPublico } from './equipe.js'
 import { conflito, invalido, naoEncontrado, validar } from '../lib/http.js'
 import { SLA_PADRAO } from '../lib/sla.js'
 
+/**
+ * As seis categorias que todo workspace novo ganha.
+ *
+ * `slot` e o que importa: ele aponta para `--cat-N` em globals.css, que define
+ * um tom por modo. `cor` fica so como reserva para quem nao entende slot.
+ *
+ * A paleta antiga reprovava no teste de contraste: `#14b8a6` (Conteudo) e
+ * `#0ea5e9` (Suporte) ficavam a dE 12.8 em visao NORMAL contra a superficie
+ * escura, abaixo do piso de 15. Nao era daltonismo — era contraste
+ * insuficiente entre dois tons parecidos.
+ */
 const CATEGORIAS_PADRAO = [
-  { nome: 'Desenvolvimento', cor: '#6366f1', multiplicadorSla: 1 },
-  { nome: 'Design', cor: '#ec4899', multiplicadorSla: 1 },
-  { nome: 'Infraestrutura', cor: '#f97316', multiplicadorSla: 1.5 },
-  { nome: 'Suporte', cor: '#0ea5e9', multiplicadorSla: 0.5 },
-  { nome: 'Conteudo', cor: '#14b8a6', multiplicadorSla: 1 },
-  { nome: 'Comercial', cor: '#a855f7', multiplicadorSla: 2 },
+  { nome: 'Desenvolvimento', slot: 1, cor: '#2a78d6', multiplicadorSla: 1 },
+  { nome: 'Design', slot: 2, cor: '#eb6834', multiplicadorSla: 1 },
+  { nome: 'Infraestrutura', slot: 3, cor: '#1baf7a', multiplicadorSla: 1.5 },
+  { nome: 'Suporte', slot: 4, cor: '#eda100', multiplicadorSla: 0.5 },
+  { nome: 'Conteudo', slot: 5, cor: '#e87ba4', multiplicadorSla: 1 },
+  { nome: 'Comercial', slot: 6, cor: '#008300', multiplicadorSla: 2 },
 ]
 
 function gerarSlug(texto: string): string {
