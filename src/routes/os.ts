@@ -166,9 +166,16 @@ function aplicarTransicao(
 }
 
 /** Gera OS-<ano>-<sequencial> por tenant. */
+/**
+ * `AT-2026-0001`.
+ *
+ * `AT` de atividade. `OS` ficou para a ordem de servico de faturamento, que e
+ * outra coisa e tem o proprio contador — sem prefixos distintos, dois registros
+ * diferentes teriam o mesmo codigo.
+ */
 async function gerarCodigo(tenantId: string): Promise<string> {
   const ano = new Date().getFullYear()
-  const prefixo = `OS-${ano}-`
+  const prefixo = `AT-${ano}-`
   const [linha] = await db
     .select({ total: sql<number>`count(*)::int` })
     .from(atividades)

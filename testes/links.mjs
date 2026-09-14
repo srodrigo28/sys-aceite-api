@@ -53,8 +53,9 @@ for (const [nome, rota] of [
   ['/perfil', '/perfil'],
   ['/configuracoes', '/configuracoes'],
   ['/projetos/[id]', `/projetos/${projeto.id}`],
-  // rota do FRONTEND, nao caminho de API — continua /os
-  ['/projetos/[id]/os/[osId]', `/projetos/${projeto.id}/os/${os.id}`],
+  // rota do FRONTEND. Renomeada junto com o resto: a tela e de atividade, e
+  // /os agora e a O.S. de faturamento, que e outra coisa.
+  ['/projetos/[id]/atividades/[atividadeId]', `/projetos/${projeto.id}/atividades/${os.id}`],
   ['/a/[token]', `/a/${link.token}`],
 ]) {
   const r = await fetch(WEB + rota)
