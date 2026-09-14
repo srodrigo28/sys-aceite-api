@@ -1,0 +1,11 @@
+-- A-4b: a ponte de compatibilidade sai.
+--
+-- A view `ordens_servico` existia para o codigo antigo continuar lendo durante
+-- a janela entre a migration 0007 e o redeploy da API. Essa janela fechou: a
+-- API no ar le `atividades` direto, e o web ja chama `/atividades`.
+--
+-- Mantida ate aqui de proposito, como rede para um rollback de imagem da API.
+-- Depois deste passo, voltar para uma imagem anterior ao A-1 exige recriar a
+-- view a mao:
+--   CREATE VIEW ordens_servico AS SELECT * FROM atividades;
+DROP VIEW IF EXISTS "ordens_servico";
