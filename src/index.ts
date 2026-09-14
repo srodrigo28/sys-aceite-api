@@ -26,10 +26,8 @@ import { rotasOs } from './routes/os.js'
 import { rotasProjetos } from './routes/projetos.js'
 import { rotasPublicas } from './routes/publico.js'
 import { rotasSla } from './routes/sla.js'
-import { reescreverUrlAntiga } from './lib/rotas.js'
 
 const app = Fastify({
-  rewriteUrl: (req) => reescreverUrlAntiga(req.url ?? '/'),
   logger: {
     level: env.NODE_ENV === 'production' ? 'info' : 'debug',
     transport:

@@ -27,8 +27,7 @@
     "db:limpar-testes": "tsx src/scripts/limpar-testes.ts",
     "teste:grupos": "node testes/grupos.mjs",
     "teste:corrente": "node testes/corrente-publica.mjs",
-    "teste:doc": "node testes/doc.mjs",
-    "teste:ponte": "node testes/ponte.mjs"
+    "teste:doc": "node testes/doc.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",
