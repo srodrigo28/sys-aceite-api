@@ -59,7 +59,7 @@ const beta = (await req('POST', '/projetos', { nome: 'Beta', cliente: 'Cliente B
   .corpo.projeto
 const osBeta = await req(
   'POST',
-  '/os',
+  '/atividades',
   { projetoId: beta.id, titulo: 'O.S. que o colaborador nao pode ver' },
   tokenAdmin,
 )
@@ -182,7 +182,7 @@ conferir(
 const listaAdmin = await req('GET', '/projetos', undefined, tokenAdmin)
 conferir(listaAdmin.corpo.projetos?.length === 2, `admin ve os 2 projetos (viu ${listaAdmin.corpo.projetos?.length})`)
 
-const osAlheia = await req('GET', `/os/${osBeta.corpo.os.id}`, undefined, tokenColab)
+const osAlheia = await req('GET', `/atividades/${osBeta.corpo.os.id}`, undefined, tokenColab)
 conferir(osAlheia.status === 404, `O.S. de projeto alheio da 404 (deu ${osAlheia.status})`)
 
 /* 9. colaborador nao administra ----------------------------------------- */
@@ -293,7 +293,7 @@ const tokenColab2 = (await req('POST', '/auth/login', { email: emailColab, senha
 
 const criarAlheia = await req(
   'POST',
-  '/os',
+  '/atividades',
   { projetoId: beta.id, titulo: 'nao deveria entrar' },
   tokenColab2,
 )
@@ -301,18 +301,18 @@ conferir(criarAlheia.status === 404, `criar O.S. em projeto alheio da 404 (${cri
 
 const moverAlheia = await req(
   'PATCH',
-  `/os/${osBeta.corpo.os.id}/status`,
+  `/atividades/${osBeta.corpo.os.id}/status`,
   { status: 'atendendo' },
   tokenColab2,
 )
 conferir(moverAlheia.status === 404, `mover O.S. alheia da 404 (${moverAlheia.status})`)
 
-const apagarAlheia = await req('DELETE', `/os/${osBeta.corpo.os.id}`, undefined, tokenColab2)
+const apagarAlheia = await req('DELETE', `/atividades/${osBeta.corpo.os.id}`, undefined, tokenColab2)
 conferir(apagarAlheia.status === 404, `apagar O.S. alheia da 404 (${apagarAlheia.status})`)
 
 const linkAlheio = await req(
   'POST',
-  `/os/${osBeta.corpo.os.id}/links`,
+  `/atividades/${osBeta.corpo.os.id}/links`,
   { validade: '7d' },
   tokenColab2,
 )

@@ -18,11 +18,11 @@ const h = { authorization: `Bearer ${login.token}`, 'content-type': 'application
 
 const { projetos } = await (await fetch(`${API}/projetos`, { headers: h })).json()
 const projeto = projetos[0]
-const quadro = await (await fetch(`${API}/projetos/${projeto.id}/os`, { headers: h })).json()
+const quadro = await (await fetch(`${API}/projetos/${projeto.id}/atividades`, { headers: h })).json()
 const os = quadro.ordens.find((o) => o.status !== 'finalizado') ?? quadro.ordens[0]
 
 const { link } = await (
-  await fetch(`${API}/os/${os.id}/links`, {
+  await fetch(`${API}/atividades/${os.id}/links`, {
     method: 'POST',
     headers: h,
     body: JSON.stringify({
@@ -38,7 +38,7 @@ console.log('=== rotas para conferir no navegador ===')
 console.log(`login      ${WEB}/login`)
 console.log(`dashboard  ${WEB}/dashboard`)
 console.log(`kanban     ${WEB}/projetos/${projeto.id}`)
-console.log(`detalhe    ${WEB}/projetos/${projeto.id}/os/${os.id}`)
+console.log(`detalhe    ${WEB}/projetos/${projeto.id}/atividades/${os.id}`)
 console.log(`aprovacao  ${WEB}/a/${link.token}`)
 console.log()
 
@@ -53,6 +53,7 @@ for (const [nome, rota] of [
   ['/perfil', '/perfil'],
   ['/configuracoes', '/configuracoes'],
   ['/projetos/[id]', `/projetos/${projeto.id}`],
+  // rota do FRONTEND, nao caminho de API — continua /os
   ['/projetos/[id]/os/[osId]', `/projetos/${projeto.id}/os/${os.id}`],
   ['/a/[token]', `/a/${link.token}`],
 ]) {

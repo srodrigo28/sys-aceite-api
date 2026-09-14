@@ -58,7 +58,7 @@ ok(`projeto criado: ${projeto.nome}`)
 
 // 5. O.S. critica (SLA curto, para ver o relogio andar)
 const catInfra = sla.categorias.find((c) => c.nome === 'Infraestrutura')
-const { os } = await req('POST', '/os', {
+const { os } = await req('POST', '/atividades', {
   projetoId: projeto.id,
   titulo: 'Publicar nova home com o banner de setembro',
   descricao: 'Subir a home revisada, trocar o banner e validar no mobile.',
@@ -69,22 +69,22 @@ const { os } = await req('POST', '/os', {
 ok(`O.S. criada: ${os.codigo}`)
 
 // 6. kanban com SLA calculado
-const quadro = await req('GET', `/projetos/${projeto.id}/os`)
+const quadro = await req('GET', `/projetos/${projeto.id}/atividades`)
 const cardSla = quadro.ordens[0].sla
 ok(`SLA calculado -> resolucao ${cardSla.resolucao.prazoMinutos}min (critica 240 x infra 1.5 = 360), estado ${cardSla.resolucao.estado}, ${cardSla.resolucao.restanteLegivel}`)
 
 // 7. mover no kanban (manual)
-await req('PATCH', `/os/${os.id}/status`, { status: 'atendendo' })
-await req('PATCH', `/os/${os.id}/status`, { status: 'pausado' })
-await req('PATCH', `/os/${os.id}/status`, { status: 'atendendo' })
+await req('PATCH', `/atividades/${os.id}/status`, { status: 'atendendo' })
+await req('PATCH', `/atividades/${os.id}/status`, { status: 'pausado' })
+await req('PATCH', `/atividades/${os.id}/status`, { status: 'atendendo' })
 ok('transicoes de status: a_fazer -> atendendo -> pausado -> atendendo')
 
 // 8. comentario interno nao pode vazar no link publico
-await req('POST', `/os/${os.id}/comentarios`, { texto: 'SEGREDO INTERNO - margem do projeto', interno: true })
+await req('POST', `/atividades/${os.id}/comentarios`, { texto: 'SEGREDO INTERNO - margem do projeto', interno: true })
 ok('comentario interno adicionado')
 
 // 9. gerar link de aprovacao
-const { link } = await req('POST', `/os/${os.id}/links`, {
+const { link } = await req('POST', `/atividades/${os.id}/links`, {
   aprovadorNome: 'Maria Silva',
   aprovadorEmail: 'maria@padaria.com',
   mensagem: 'Oi Maria, pode conferir a home antes de publicarmos?',
@@ -131,7 +131,7 @@ if (!bloqueou) throw new Error('FALHA: aceitou parecer duplicado')
 ok('link virou somente leitura apos o parecer')
 
 // 14. o card foi marcado, mas NAO mudou de coluna
-const detalhe = await req('GET', `/os/${os.id}`)
+const detalhe = await req('GET', `/atividades/${os.id}`)
 if (detalhe.os.aprovado !== true) throw new Error('FALHA: card nao ficou marcado como aprovado')
 if (detalhe.os.status !== 'atendendo') throw new Error(`FALHA: status mudou sozinho para ${detalhe.os.status}`)
 ok(`card marcado: aprovado por ${detalhe.os.aprovadorNome}`)

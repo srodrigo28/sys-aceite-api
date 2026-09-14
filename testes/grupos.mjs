@@ -260,7 +260,7 @@ conferir(tipoDaBase === 'convite_aceito', `a notificacao da base e do convite ($
 // 8. atribuir gera notificacao PARA O RESPONSAVEL
 const atividade = await req(
   'POST',
-  '/os',
+  '/atividades',
   { projetoId: projeto.id, titulo: 'Trocar o filtro do ar', responsavelId: idColab },
   tokenAdmin,
 )
@@ -272,7 +272,7 @@ const itensChecklist = []
 for (const [ordem, texto] of ['Primeiro', 'Segundo', 'Terceiro'].entries()) {
   const criadoItem = await req(
     'POST',
-    `/os/${atividade.corpo.os.id}/checklist`,
+    `/atividades/${atividade.corpo.os.id}/checklist`,
     { texto, ordem },
     tokenAdmin,
   )
@@ -283,7 +283,7 @@ conferir(itensChecklist.every((item) => item?.id), 'cria os tres itens do checkl
 const ordemFinal = [...itensChecklist].reverse().map((item) => item.id)
 const reordenou = await req(
   'PUT',
-  `/os/${atividade.corpo.os.id}/checklist/ordem`,
+  `/atividades/${atividade.corpo.os.id}/checklist/ordem`,
   { itemIds: ordemFinal },
   tokenAdmin,
 )
@@ -292,7 +292,7 @@ conferir(
   `reordena a lista inteira (${reordenou.status})`,
 )
 
-const persistida = await req('GET', `/os/${atividade.corpo.os.id}`, undefined, tokenAdmin)
+const persistida = await req('GET', `/atividades/${atividade.corpo.os.id}`, undefined, tokenAdmin)
 conferir(
   persistida.corpo.checklist?.map((item) => item.id).join(',') === ordemFinal.join(','),
   'a ordem persiste ao recarregar o detalhe',
@@ -300,22 +300,22 @@ conferir(
 
 const incompleta = await req(
   'PUT',
-  `/os/${atividade.corpo.os.id}/checklist/ordem`,
+  `/atividades/${atividade.corpo.os.id}/checklist/ordem`,
   { itemIds: ordemFinal.slice(1) },
   tokenAdmin,
 )
 conferir(incompleta.status === 400, `lista incompleta e recusada (${incompleta.status})`)
 conferir(
-  (await req('GET', `/os/${atividade.corpo.os.id}`, undefined, tokenAdmin)).corpo.checklist?.map((item) => item.id).join(',') === ordemFinal.join(','),
+  (await req('GET', `/atividades/${atividade.corpo.os.id}`, undefined, tokenAdmin)).corpo.checklist?.map((item) => item.id).join(',') === ordemFinal.join(','),
   'recusa nao altera a ordem existente',
 )
 
 const ordemAlternativa = [ordemFinal[1], ordemFinal[2], ordemFinal[0]]
 const concorrentes = await Promise.all([
-  req('PUT', `/os/${atividade.corpo.os.id}/checklist/ordem`, { itemIds: ordemFinal }, tokenAdmin),
-  req('PUT', `/os/${atividade.corpo.os.id}/checklist/ordem`, { itemIds: ordemAlternativa }, tokenAdmin),
+  req('PUT', `/atividades/${atividade.corpo.os.id}/checklist/ordem`, { itemIds: ordemFinal }, tokenAdmin),
+  req('PUT', `/atividades/${atividade.corpo.os.id}/checklist/ordem`, { itemIds: ordemAlternativa }, tokenAdmin),
 ])
-const depoisDaConcorrencia = (await req('GET', `/os/${atividade.corpo.os.id}`, undefined, tokenAdmin)).corpo.checklist
+const depoisDaConcorrencia = (await req('GET', `/atividades/${atividade.corpo.os.id}`, undefined, tokenAdmin)).corpo.checklist
   ?.map((item) => item.id)
   .join(',')
 conferir(concorrentes.every((r) => r.status === 200), 'duas reordenacoes simultaneas sao aceitas')
@@ -326,7 +326,7 @@ conferir(
 
 const outroNaoOrdena = await req(
   'PUT',
-  `/os/${atividade.corpo.os.id}/checklist/ordem`,
+  `/atividades/${atividade.corpo.os.id}/checklist/ordem`,
   { itemIds: ordemFinal },
   outro.corpo.token,
 )
@@ -349,7 +349,7 @@ conferir(
 // 10. o responsavel move o status -> o admin recebe
 const moveu = await req(
   'PATCH',
-  `/os/${atividade.corpo.os.id}/status`,
+  `/atividades/${atividade.corpo.os.id}/status`,
   { status: 'atendendo' },
   tokenColab,
 )
@@ -365,7 +365,7 @@ conferir(
 // 12. comentario interno nao notifica
 await req(
   'POST',
-  `/os/${atividade.corpo.os.id}/comentarios`,
+  `/atividades/${atividade.corpo.os.id}/comentarios`,
   { texto: 'Lembrete so para o time', interno: true },
   tokenColab,
 )
@@ -376,7 +376,7 @@ conferir(
 
 const comentario = await req(
   'POST',
-  `/os/${atividade.corpo.os.id}/comentarios`,
+  `/atividades/${atividade.corpo.os.id}/comentarios`,
   { texto: 'Cliente confirmou o horario', interno: false },
   tokenColab,
 )
@@ -424,7 +424,7 @@ conferir(soNaoLidas.corpo.itens.length === 0, 'filtro apenasNaoLidas respeita o 
 // 15. parecer do cliente: quem aprova nao e usuario, mas o time e avisado
 const linkAprovacao = await req(
   'POST',
-  `/os/${atividade.corpo.os.id}/links`,
+  `/atividades/${atividade.corpo.os.id}/links`,
   { validade: '7d' },
   tokenAdmin,
 )

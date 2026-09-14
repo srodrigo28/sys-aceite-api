@@ -57,7 +57,7 @@ async function contarArquivosDoBucket() {
 async function enviarArquivo(token, osId, buffer, nome, mime) {
   const form = new FormData()
   form.append('arquivo', new Blob([new Uint8Array(buffer)], { type: mime }), nome)
-  const r = await fetch(`${API}/os/${osId}/anexos`, {
+  const r = await fetch(`${API}/atividades/${osId}/anexos`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}` },
     body: form,
@@ -140,11 +140,11 @@ const { projeto } = await jsonComToken(token, '/projetos', {
   method: 'POST',
   body: JSON.stringify({ nome: 'Projeto de anexos', cliente: 'Teste', cor: '#6366f1' }),
 })
-const { os } = await jsonComToken(token, '/os', {
+const { os } = await jsonComToken(token, '/atividades', {
   method: 'POST',
   body: JSON.stringify({ projetoId: projeto.id, titulo: 'O.S. principal de anexos' }),
 })
-const { os: outraOs } = await jsonComToken(token, '/os', {
+const { os: outraOs } = await jsonComToken(token, '/atividades', {
   method: 'POST',
   body: JSON.stringify({ projetoId: projeto.id, titulo: 'Outra O.S. de anexos' }),
 })
@@ -160,8 +160,8 @@ ok(`upload: ${anexo.nome} (${anexo.mimeType}, ${anexo.tamanho} bytes)`)
 if (JSON.stringify(anexo).includes('99dev') || 'caminho' in anexo || 'fileId' in anexo) {
   falhar('a resposta do upload vazou caminho/fileId')
 }
-const detalhe = await jsonComToken(token, `/os/${os.id}`)
-if (JSON.stringify(detalhe).includes('99dev')) falhar('GET /os/:id vazou a URL do bucket')
+const detalhe = await jsonComToken(token, `/atividades/${os.id}`)
+if (JSON.stringify(detalhe).includes('99dev')) falhar('GET /atividades/:id vazou a URL do bucket')
 ok('nenhuma resposta da API contem a URL do bucket')
 
 // 3. download autenticado devolve os bytes certos
@@ -212,7 +212,7 @@ ok('arquivo nao-imagem acima do limite e recusado com o limite na mensagem')
 
 // 3d. retencao: apagar a O.S. tem que tirar os arquivos do bucket tambem
 const antesDeApagar = await contarArquivosDoBucket()
-const { os: osDescartavel } = await jsonComToken(token, '/os', {
+const { os: osDescartavel } = await jsonComToken(token, '/atividades', {
   method: 'POST',
   body: JSON.stringify({ projetoId: os.projetoId, titulo: 'O.S. que vai ser apagada' }),
 })
@@ -220,7 +220,7 @@ await enviarArquivo(token, osDescartavel.id, PNG, 'sera apagada.png', 'image/png
 const comAnexo = await contarArquivosDoBucket()
 if (comAnexo <= antesDeApagar) falhar('o upload de controle nao chegou ao bucket')
 
-const apagouOs = await fetch(`${API}/os/${osDescartavel.id}`, {
+const apagouOs = await fetch(`${API}/atividades/${osDescartavel.id}`, {
   method: 'DELETE',
   headers: { authorization: `Bearer ${token}` },
 })
@@ -259,7 +259,7 @@ if (outroTenant.status !== 404) falhar(`outro tenant devia dar 404, veio ${outro
 ok('anexo de outro tenant: 404')
 
 // 7. link com anexos ligados -> imagem abre sem login
-const comAnexos = await jsonComToken(token, `/os/${os.id}/links`, {
+const comAnexos = await jsonComToken(token, `/atividades/${os.id}/links`, {
   method: 'POST',
   body: JSON.stringify({ validade: '7d', mostrarAnexos: true, moverParaAprovacao: false }),
 })
@@ -285,7 +285,7 @@ if (aposRevogar.status !== 404) falhar(`link revogado devia dar 404, veio ${apos
 ok('link revogado: imagem para de abrir (404)')
 
 // 10. link com mostrarAnexos:false
-const semAnexos = await jsonComToken(token, `/os/${os.id}/links`, {
+const semAnexos = await jsonComToken(token, `/atividades/${os.id}/links`, {
   method: 'POST',
   body: JSON.stringify({ validade: '7d', mostrarAnexos: false, moverParaAprovacao: false }),
 })
@@ -316,7 +316,7 @@ const antes = await (await fetch(`${env.BUCKET_URL}/files?bucket=${env.BUCKET_SL
   headers: { 'X-API-Token': env.BUCKET_TOKEN },
 })).json()
 
-const del = await fetch(`${API}/os/${os.id}/anexos/${anexo.id}`, {
+const del = await fetch(`${API}/atividades/${os.id}/anexos/${anexo.id}`, {
   method: 'DELETE',
   headers: { authorization: `Bearer ${token}` },
 })
@@ -334,7 +334,7 @@ if (sumiu.status !== 404) falhar(`anexo apagado devia dar 404, veio ${sumiu.stat
 ok('anexo apagado: 404')
 
 // limpa o segundo anexo
-await fetch(`${API}/os/${outraOs.id}/anexos/${anexoOutra.id}`, {
+await fetch(`${API}/atividades/${outraOs.id}/anexos/${anexoOutra.id}`, {
   method: 'DELETE',
   headers: { authorization: `Bearer ${token}` },
 })

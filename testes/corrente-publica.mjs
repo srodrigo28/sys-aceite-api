@@ -57,7 +57,7 @@ async function pngDeAproximadamente(mb) {
 async function enviar(token, osId, buffer, nome, mime) {
   const form = new FormData()
   form.append('arquivo', new Blob([new Uint8Array(buffer)], { type: mime }), nome)
-  const r = await fetch(`${API}/os/${osId}/anexos`, {
+  const r = await fetch(`${API}/atividades/${osId}/anexos`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}` },
     body: form,
@@ -131,7 +131,7 @@ const projeto = await json('/projetos', {
 })
 const projetoId = projeto.corpo?.projeto?.id
 
-const os = await json('/os', {
+const os = await json('/atividades', {
   method: 'POST',
   headers: { ...comToken, 'content-type': 'application/json' },
   body: JSON.stringify({
@@ -206,13 +206,13 @@ conferir(
 const semToken = await fetch(`${API}/anexos/${anexoId}/arquivo`)
 conferir(semToken.status === 401, `sem token o arquivo nao vaza (${semToken.status})`)
 
-const remocao = await fetch(`${API}/os/${osId}/anexos/${anexoId}`, {
+const remocao = await fetch(`${API}/atividades/${osId}/anexos/${anexoId}`, {
   method: 'DELETE',
   headers: comToken,
 })
 conferir(remocao.status === 204, `remover o anexo responde 204 (${remocao.status})`)
 
-const depois = await json(`/os/${osId}`, { headers: comToken })
+const depois = await json(`/atividades/${osId}`, { headers: comToken })
 conferir(
   (depois.corpo?.anexos ?? []).every((a) => a.id !== anexoId),
   'o anexo sumiu da listagem',
@@ -223,7 +223,7 @@ conferir(
  * ------------------------------------------------------------------ */
 console.log('\n  -- limpeza --')
 
-await fetch(`${API}/os/${osId}`, { method: 'DELETE', headers: comToken })
+await fetch(`${API}/atividades/${osId}`, { method: 'DELETE', headers: comToken })
 const projetoRemovido = await fetch(`${API}/projetos/${projetoId}`, {
   method: 'DELETE',
   headers: comToken,
