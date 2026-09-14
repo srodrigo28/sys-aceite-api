@@ -37,6 +37,31 @@ async function req(metodo, caminho, corpo, token) {
   return { status: r.status, corpo: json }
 }
 
+/**
+ * Tira do corpo o que muda entre duas chamadas.
+ *
+ * O bloco `sla` inteiro e derivado do relogio: `prazoEm`, `minutosRestantes` e
+ * `consumo` sao recalculados a cada requisicao. Comparar corpo cru fazia o
+ * teste falhar por 190ms de diferenca — flagrado na primeira rodada, e era o
+ * teste errado, nao a ponte. O que precisa ser igual e o DADO; o relogio nao.
+ *
+ * `temSla` entra no lugar para a limpeza nao esconder um bloco faltando.
+ */
+function semVolateis(valor) {
+  if (Array.isArray(valor)) return valor.map(semVolateis)
+  if (valor && typeof valor === 'object') {
+    const entradas = Object.entries(valor)
+      .filter(([chave]) => chave !== 'sla')
+      .map(([chave, v]) => [chave, semVolateis(v)])
+    if (Object.hasOwn(valor, 'sla')) entradas.push(['temSla', true])
+    return Object.fromEntries(entradas)
+  }
+  return valor
+}
+
+const iguais = (a, b) => JSON.stringify(semVolateis(a)) === JSON.stringify(semVolateis(b))
+
+
 console.log(`\n=== SMOKE TEST — ponte /os -> /atividades em ${BASE} ===\n`)
 
 const email = process.env.TESTE_EMAIL
@@ -65,8 +90,8 @@ const antigo = await req('GET', '/os/minhas', null, token)
 conferir(novo.status === 200, `/atividades/minhas responde 200 (${novo.status})`)
 conferir(antigo.status === 200, `/os/minhas responde 200 pela ponte (${antigo.status})`)
 conferir(
-  JSON.stringify(novo.corpo) === JSON.stringify(antigo.corpo),
-  'os dois caminhos devolvem exatamente o mesmo corpo',
+  iguais(novo.corpo, antigo.corpo),
+  'os dois caminhos devolvem os mesmos dados (fora o relogio de SLA)',
 )
 
 /* ------------------------------------------------------------------ *
@@ -99,8 +124,8 @@ if (projetoId) {
     `/projetos/:id/os responde 200 pela ponte (${aninhadoAntigo.status})`,
   )
   conferir(
-    JSON.stringify(aninhadoNovo.corpo) === JSON.stringify(aninhadoAntigo.corpo),
-    'a rota aninhada devolve o mesmo corpo nos dois caminhos',
+    iguais(aninhadoNovo.corpo, aninhadoAntigo.corpo),
+    'a rota aninhada devolve os mesmos dados nos dois caminhos',
   )
 } else {
   console.log('  --    sem projeto no workspace; rota aninhada nao verificada')
